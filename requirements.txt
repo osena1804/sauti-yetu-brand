@@ -4,3 +4,4 @@ google-genai>=0.3.0
 python-dotenv>=1.0.1
 pytest>=8.3.3
 africastalking>=1.2.9
+cryptography>=43.0.3
