@@ -19,7 +19,7 @@ import gemma_client as gc
 import data_store as ds
 import sms_client as sms
 import crypto_utils as crypto
-from admin_dispute_view import render_dispute_audit_dashboard
+from admin_dispute_view import render_admin_dispute_view
 
 # Page Configuration
 st.set_page_config(page_title="Sauti-Yetu", page_icon="📣", layout="wide")
@@ -318,4 +318,4 @@ if tab_admin is not None:
 
         # Wire in Dispute Audit Dashboard scoped to the selected admin client
         st.divider()
-        render_dispute_audit_dashboard(client_id=admin_client)
+        render_admin_dispute_view(client_id="default")

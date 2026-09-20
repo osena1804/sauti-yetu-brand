@@ -164,3 +164,6 @@ def _update_complaint_status(complaint_id: str, new_status: str):
     if len(idx) > 0:
         df.loc[idx, "status"] = new_status
         _save_df_atomic(df)
+def render_dispute_audit_dashboard(client_id: str = "default"):
+    """Backward compatibility alias for app.py."""
+    render_admin_dispute_view(client_id=client_id)        
