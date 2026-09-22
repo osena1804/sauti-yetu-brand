@@ -11,6 +11,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
 
 # Safely handle imports whether modules are in root or in src/
 try:
@@ -125,15 +126,33 @@ with tab_submit:
         elif attached_photo is not None:
             os.makedirs("data/submitted_photos", exist_ok=True)
             permanent_path = os.path.join("data/submitted_photos", f"{uuid.uuid4().hex[:8]}.jpg")
-            with open(permanent_path, "wb") as f:
-                f.write(attached_photo.getbuffer())
+
+            # Process and downscale image to prevent stream bottlenecks
+            img = Image.open(attached_photo)
+            img = img.convert("RGB")
+            img.thumbnail((1024, 1024))
+            img.save(permanent_path, "JPEG", quality=80)
+            
+            # Reset file pointer for buffer safety
+            if hasattr(attached_photo, "seek"):
+                attached_photo.seek(0)
 
             with st.spinner("Gemma is looking at your photo..."):
-                record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
-                if record:
-                    record["submitted_photo"] = permanent_path
-                    st.image(attached_photo, caption="Photo submitted", width=300)
-                    debug_error = record.pop("_debug_error", None)
+                try:
+                    record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
+                except Exception as e:
+                    st.warning(f"Classification hit an error, saving with basic info instead: {e}")
+                    record = gc._mock_classify("Photo report submitted.", client_choice)
+                    record.update({
+                        "timestamp": datetime.now().isoformat(),
+                        "raw_text": f"[photo report: {os.path.basename(permanent_path)}]",
+                        "client_id": client_choice,
+                        "status": "Open",
+                    })
+
+                record["submitted_photo"] = permanent_path
+                st.image(permanent_path, caption="Photo submitted", width=300)
+                debug_error = record.pop("_debug_error", None)
 
         elif raw_text.strip():
             with st.spinner("Gemma is structuring your report..."):
