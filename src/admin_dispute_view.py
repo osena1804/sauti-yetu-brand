@@ -8,8 +8,12 @@ Streamlit view for Brand Managers & System Admin to:
      and low-authenticity scores before they affect public sentiment analytics.
 """
 
+import os
 import streamlit as st
 import pandas as pd
+
+import crypto_utils as crypto
+import sms_client as sms
 from data_store import load_complaints, mark_resolved, _save_df_atomic, _coerce_dtypes, DATA_PATH
 
 try:
@@ -43,29 +47,56 @@ def render_admin_dispute_view(client_id: str = "default"):
         else:
             for idx, row in open_df.iterrows():
                 with st.expander(
-                    f"[{row['urgency']}] {row['category']} - {row['county']} ({row['id']})"
+                    f"[{row.get('urgency', 'Medium')}] {row.get('category', 'General')} - {row.get('county', 'N/A')} ({row['id']})"
                 ):
-                    st.write(f"**Summary:** {row['english_summary']}")
-                    st.write(f"**Raw Consumer Input:** {row['raw_text']}")
-                    st.caption(f"Reported On: {row['timestamp']} | Days Open: {row['days_unresolved']}")
+                    # Check and display consumer photo
+                    photo_path = str(row.get("submitted_photo", "")).strip()
+                    if photo_path and os.path.exists(photo_path):
+                        st.image(photo_path, caption="Consumer-submitted photo evidence", width=350)
+
+                    st.write(f"**Summary:** {row.get('english_summary', 'No summary available')}")
+                    st.write(f"**Raw Consumer Input:** {row.get('raw_text', 'N/A')}")
+                    st.caption(f"Reported On: {row.get('timestamp', 'N/A')} | Days Open: {row.get('days_unresolved', 0)}")
 
                     with st.form(key=f"resolve_form_{row['id']}"):
                         note = st.text_area("Resolution Note / Action Taken", key=f"note_{row['id']}")
                         resolved_by = st.text_input("Manager Name / Admin ID", key=f"admin_{row['id']}")
-                        photo_url = st.text_input("Evidence Photo URL (Optional)", key=f"photo_{row['id']}")
-                        
+                        evidence_photo = st.file_uploader(
+                            "Attach resolution evidence photo (optional)", 
+                            type=["jpg", "jpeg", "png"], 
+                            key=f"photo_{row['id']}"
+                        )
+
                         submit = st.form_submit_button("Mark as Resolved")
                         if submit:
-                            if not note or not resolved_by:
+                            if not note.strip() or not resolved_by.strip():
                                 st.error("Please provide both a resolution note and your name/ID.")
                             else:
-                                mark_resolved(
+                                res_photo_path = ""
+                                if evidence_photo is not None:
+                                    os.makedirs("data", exist_ok=True)
+                                    res_photo_path = os.path.join("data", f"resolved_{row['id']}.jpg")
+                                    with open(res_photo_path, "wb") as f:
+                                        f.write(evidence_photo.getbuffer())
+
+                                resolved_row = mark_resolved(
                                     complaint_id=row['id'],
-                                    note=note,
-                                    resolved_by=resolved_by,
-                                    photo_path=photo_url
+                                    note=note.strip(),
+                                    resolved_by=resolved_by.strip(),
+                                    photo_path=res_photo_path,
                                 )
-                                st.success(f"Complaint {row['id']} resolved successfully!")
+
+                                real_phone = crypto.decrypt_phone(resolved_row.get("phone_encrypted", ""))
+                                sms_sent = sms.send_resolution_alert(
+                                    real_phone, 
+                                    resolved_row.get("category", "General"), 
+                                    resolved_row.get("county", "N/A")
+                                )
+                                
+                                if real_phone:
+                                    st.success(f"Complaint resolved by {resolved_by}. SMS alert {'sent' if sms_sent else 'mocked — check logs'}.")
+                                else:
+                                    st.success(f"Complaint resolved by {resolved_by}. No phone on file, no SMS sent.")
                                 st.rerun()
 
     # ---------------------------------------------------------------------------
@@ -79,25 +110,36 @@ def render_admin_dispute_view(client_id: str = "default"):
             st.info("No active disputes pending escalation.")
         else:
             for idx, row in disputed_df.iterrows():
-                with st.expander(f"⚠️ Dispute Escalation - {row['category']} ({row['id']})"):
-                    st.write(f"**Original Summary:** {row['english_summary']}")
-                    st.write(f"**Previous Resolution Note:** {row['resolution_note']}")
-                    st.warning(f"**Dispute Reasons & Feedback:** {row['dispute_reasons']}")
-                    st.caption(f"Dispute Count: {row['dispute_count']}")
+                with st.expander(f"⚠️ Dispute Escalation - {row.get('category', 'General')} ({row['id']})"):
+                    # Check and display consumer photo
+                    photo_path = str(row.get("submitted_photo", "")).strip()
+                    if photo_path and os.path.exists(photo_path):
+                        st.image(photo_path, caption="Original consumer-submitted photo evidence", width=350)
+
+                    st.write(f"**Original Summary:** {row.get('english_summary', 'N/A')}")
+                    st.write(f"**Previous Resolution Note:** {row.get('resolution_note', 'N/A')}")
+                    st.warning(f"**Dispute Reasons & Feedback:** {row.get('dispute_reasons', 'N/A')}")
+                    st.caption(f"Dispute Count: {row.get('dispute_count', 1)}")
 
                     with st.form(key=f"re_resolve_form_{row['id']}"):
                         new_note = st.text_area("Updated Action Plan", key=f"dispute_note_{row['id']}")
                         admin_name = st.text_input("Re-Resolving Manager", key=f"dispute_admin_{row['id']}")
-                        
+
                         resolve_btn = st.form_submit_button("Re-Resolve & Close Escalation")
                         if resolve_btn:
-                            if not new_note or not admin_name:
+                            if not new_note.strip() or not admin_name.strip():
                                 st.error("Please provide updated details before closing.")
                             else:
-                                mark_resolved(
+                                resolved_row = mark_resolved(
                                     complaint_id=row['id'],
-                                    note=f"[Re-Resolved] {new_note}",
-                                    resolved_by=admin_name
+                                    note=f"[Re-Resolved] {new_note.strip()}",
+                                    resolved_by=admin_name.strip(),
+                                )
+                                real_phone = crypto.decrypt_phone(resolved_row.get("phone_encrypted", ""))
+                                sms.send_resolution_alert(
+                                    real_phone, 
+                                    resolved_row.get("category", "General"), 
+                                    resolved_row.get("county", "N/A")
                                 )
                                 st.success("Dispute escalation closed!")
                                 st.rerun()
@@ -117,15 +159,13 @@ def render_admin_dispute_view(client_id: str = "default"):
             st.success("No items currently in quarantine.")
         else:
             for idx, row in quarantine_df.iterrows():
-                # Extract anti-fraud flags safely
                 auth_score = float(row.get("authenticity_score", 0.0))
                 is_synthetic = str(row.get("is_flagged_synthetic", "False")).lower() == "true"
                 defamation = str(row.get("defamation_flag", "False")).lower() == "true"
 
-                # Styling header by risk severity
                 risk_label = "☣️ HIGH FRAUD RISK" if (is_synthetic or defamation) else "⚠️ SUSPICIOUS AUTHENTICITY"
-                
-                with st.expander(f"{risk_label}: {row['category']} - {row['county']} ({row['id']})"):
+
+                with st.expander(f"{risk_label}: {row.get('category', 'General')} - {row.get('county', 'N/A')} ({row['id']})"):
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("Authenticity Score", f"{auth_score:.2f}")
@@ -135,9 +175,15 @@ def render_admin_dispute_view(client_id: str = "default"):
                         st.metric("Defamation Flag", "True" if defamation else "False")
 
                     st.markdown("---")
-                    st.write(f"**English Summary:** {row['english_summary']}")
-                    st.write(f"**Raw Text:** {row['raw_text']}")
-                    st.caption(f"Ingested Timestamp: {row['timestamp']}")
+                    
+                    # Display consumer-submitted photo in quarantine view if present
+                    photo_path = str(row.get("submitted_photo", "")).strip()
+                    if photo_path and os.path.exists(photo_path):
+                        st.image(photo_path, caption="Quarantined Photo Submission", width=350)
+
+                    st.write(f"**English Summary:** {row.get('english_summary', 'N/A')}")
+                    st.write(f"**Raw Text:** {row.get('raw_text', 'N/A')}")
+                    st.caption(f"Ingested Timestamp: {row.get('timestamp', 'N/A')}")
 
                     st.markdown("### Manager Override & Audit Actions")
                     col_approve, col_reject = st.columns(2)
@@ -157,13 +203,18 @@ def render_admin_dispute_view(client_id: str = "default"):
 
 def _update_complaint_status(complaint_id: str, new_status: str):
     """Helper function to update status of a record directly in the CSV store."""
+    if not os.path.exists(DATA_PATH):
+        return
+
     df = pd.read_csv(DATA_PATH)
     df = _coerce_dtypes(df)
     idx = df.index[df["id"] == complaint_id]
-    
+
     if len(idx) > 0:
         df.loc[idx, "status"] = new_status
         _save_df_atomic(df)
+
+
 def render_dispute_audit_dashboard(client_id: str = "default"):
     """Backward compatibility alias for app.py."""
-    render_admin_dispute_view(client_id=client_id)        
+    render_admin_dispute_view(client_id=client_id)
