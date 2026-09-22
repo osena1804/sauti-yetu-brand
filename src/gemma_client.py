@@ -20,7 +20,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# Attempt to pull API key from Environment Variables OR Streamlit Cloud Secrets
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not GOOGLE_API_KEY:
+    try:
+        import streamlit as st
+        GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY") or st.secrets.get("GEMINI_API_KEY")
+    except Exception:
+        pass
+
 GEMMA_MODEL = os.getenv("GEMMA_MODEL", "gemma-4-it")
 FORCE_MOCK = os.getenv("FORCE_MOCK", "0") == "1"
 
@@ -103,6 +111,14 @@ def _extract_county(text: str) -> str:
 
 def _get_client():
     """Lazily creates the Google GenAI client. Returns None if key missing -> triggers mock mode."""
+    global GOOGLE_API_KEY
+    if not GOOGLE_API_KEY:
+        try:
+            import streamlit as st
+            GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY") or st.secrets.get("GEMINI_API_KEY")
+        except Exception:
+            pass
+
     if FORCE_MOCK or not GOOGLE_API_KEY:
         return None
     try:
@@ -201,7 +217,6 @@ def _mock_classify(raw_text: str, client_id: str = "default") -> dict:
 
     urgency = "High" if any(w in text_lower for w in ["danger", "sick", "fake", "emergency"]) else "Medium"
     
-    # Mock detection rules
     is_synthetic = "as an ai" in text_lower or (len(raw_text) > 300 and "furthermore" in text_lower)
     defamation = "worst product ever made" in text_lower or ("do not buy" in text_lower and "scam" in text_lower)
     auth_score = 0.25 if is_synthetic else (0.40 if defamation else 0.88)
@@ -217,8 +232,9 @@ def _mock_classify(raw_text: str, client_id: str = "default") -> dict:
     }
 
 
-def _invoke_gemma_classification(client, contents, client_config: dict) -> dict | None:
-    """Shared execution helper for calling Gemma function calling safely."""
+def _invoke_gemma_classification(client, contents, client_config: dict):
+    """Shared execution helper for calling Gemma function calling safely.
+    Returns (result_dict_or_None, error_message_or_None)."""
     try:
         from google.genai import types
 
@@ -244,16 +260,13 @@ def _invoke_gemma_classification(client, contents, client_config: dict) -> dict 
         if response.function_calls:
             result = dict(response.function_calls[0].args)
             if _looks_degenerate(result.get("english_summary", "")):
-                print("[gemma_client] Degenerate output detected, falling back to mock")
-                return None
-            return result
+                return None, "Degenerate/repetitive output detected in model response"
+            return result, None
         else:
-            print("[gemma_client] No function call returned by model, falling back to mock.")
-            return None
+            return None, "Model did not return a function call (no structured output produced)"
 
     except Exception as e:
-        print(f"[gemma_client] Live classification failed: {e}")
-        return None
+        return None, f"{type(e).__name__}: {e}"
 
 
 def _apply_quarantine_rules(result: dict) -> dict:
@@ -276,7 +289,7 @@ def classify_complaint(raw_text: str, client_id: str = "default") -> dict:
     result = None
 
     if client is not None:
-        result = _invoke_gemma_classification(client, raw_text, client_config)
+        result, _ = _invoke_gemma_classification(client, raw_text, client_config)
 
     if result is None:
         result = _mock_classify(raw_text, client_id)
@@ -298,7 +311,7 @@ def classify_complaint_audio(audio_path: str, client_id: str = "default") -> dic
         uploaded = None
         try:
             uploaded = client.files.upload(file=audio_path)
-            result = _invoke_gemma_classification(client, [uploaded], client_config)
+            result, _ = _invoke_gemma_classification(client, [uploaded], client_config)
         finally:
             if uploaded is not None:
                 try:
@@ -321,27 +334,43 @@ def classify_complaint_image(image_path: str, client_id: str = "default") -> dic
     client = _get_client()
     client_config = get_client_config(client_id)
     result = None
+    error_msg = None
 
     if client is not None:
         uploaded = None
         try:
-            uploaded = client.files.upload(file=image_path)
-            result = _invoke_gemma_classification(client, [uploaded], client_config)
+            file_size = os.path.getsize(image_path)
+            if file_size == 0:
+                error_msg = "Uploaded photo file is empty (0 bytes) -- likely an interrupted upload"
+            else:
+                uploaded = client.files.upload(file=image_path)
+                result, error_msg = _invoke_gemma_classification(
+                    client,
+                    [uploaded, "This is a photo submitted by a consumer as product feedback. Classify it."],
+                    client_config,
+                )
+        except Exception as e:
+            error_msg = f"File upload to Gemma failed: {type(e).__name__}: {e}"
         finally:
             if uploaded is not None:
                 try:
                     client.files.delete(name=uploaded.name)
                 except Exception:
                     pass
+    else:
+        error_msg = "No live Gemma client available (mock mode)"
 
     if result is None:
-        result = _mock_classify("Image report showing product packaging and shelf display issues.", client_id)
+        result = _mock_classify("Consumer submitted an image report for quality evaluation.", client_id)
+        if error_msg:
+            result["_debug_error"] = error_msg
 
     result.update({
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "raw_text": f"[photo report: {os.path.basename(image_path)}]",
+        "raw_text": f"[photo input: {os.path.basename(image_path)}]",
         "client_id": client_id,
     })
+
     return _apply_quarantine_rules(result)
 
 

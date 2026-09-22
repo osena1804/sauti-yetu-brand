@@ -9,17 +9,23 @@ import uuid
 import tempfile
 from datetime import datetime
 
-# Path setup for src module imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-
 import streamlit as st
 import pandas as pd
 
-import gemma_client as gc
-import data_store as ds
-import sms_client as sms
-import crypto_utils as crypto
-from admin_dispute_view import render_admin_dispute_view
+# Safely handle imports whether modules are in root or in src/
+try:
+    import gemma_client as gc
+    import data_store as ds
+    import sms_client as sms
+    import crypto_utils as crypto
+    from admin_dispute_view import render_admin_dispute_view
+except ModuleNotFoundError:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+    import gemma_client as gc
+    import data_store as ds
+    import sms_client as sms
+    import crypto_utils as crypto
+    from admin_dispute_view import render_admin_dispute_view
 
 # Page Configuration
 st.set_page_config(page_title="Sauti-Yetu", page_icon="📣", layout="wide")
@@ -34,15 +40,22 @@ else:
 st.title("📣 Sauti-Yetu")
 st.caption("Enterprise Consumer Intelligence — streaming, organic consumer feedback, powered by Gemma.")
 
-# Access Control
+# Access Control (Supports OS environment variables AND Streamlit Cloud Secrets)
 admin_param = st.query_params.get("admin", "false").lower() == "true"
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
+admin_key_env = os.environ.get("ADMIN_KEY")
+if not admin_key_env:
+    try:
+        admin_key_env = st.secrets.get("ADMIN_KEY", "admin")
+    except Exception:
+        admin_key_env = "admin"
+
 if admin_param and not st.session_state.is_admin:
     st.sidebar.markdown("---")
     pwd = st.sidebar.text_input("Enter Admin Key", type="password")
-    if pwd == os.environ.get("ADMIN_KEY", "admin"):
+    if pwd == admin_key_env:
         st.session_state.is_admin = True
         st.sidebar.success("🔒 Administrator Authenticated")
         st.rerun()
@@ -87,6 +100,7 @@ with tab_submit:
 
     if st.button("Send report", type="primary"):
         record = None
+        debug_error = None
 
         if recorded_audio is not None:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
@@ -110,6 +124,9 @@ with tab_submit:
                 record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
                 record["submitted_photo"] = permanent_path
                 st.image(attached_photo, caption="Photo submitted", width=300)
+                
+                # Extract debug info before adding record to data store
+                debug_error = record.pop("_debug_error", None)
 
         elif raw_text.strip():
             with st.spinner("Gemma is structuring your report..."):
@@ -123,7 +140,12 @@ with tab_submit:
             record["phone_hash"] = crypto.hash_phone(phone)            
             record["county"] = county_choice
             ds.add_complaint(record)
+            
             st.success(f"Logged as **{record.get('category', 'General')}** ({record.get('urgency', 'Low')} urgency) — {county_choice}")
+            
+            if debug_error:
+                with st.expander("⚠️ Debug: Why this report used fallback mode"):
+                    st.code(debug_error)
 
 # ---------------------------------------------------------------------------
 # PUBLIC PORTAL -- Feedback Dashboard & Responsiveness Clock
@@ -206,9 +228,7 @@ with tab_public:
                                 st.warning("Please explain why you're disputing this.")
 
                 if row.get("status") in ("Resolved", "Disputed") and row.get("resolution_note"):
-                    st.caption(f"Resolution claim: {row['resolution_note']} — signed off by {row['resolved_by']} on {row['resolved_date']}")
-
-                st.divider()
+                    st.caption(f"Resolution claim: {row['resolution_note']} — reviewed and signed off internally on {row['resolved_date']}")
 
 # ---------------------------------------------------------------------------
 # ADMIN PORTAL -- Cluster Gap Detector & Brief Generator
