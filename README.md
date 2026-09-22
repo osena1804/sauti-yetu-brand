@@ -1,5 +1,7 @@
 # 🎙️ Sauti Yetu — Real-Time Feedback & Fraud Audit Portal
 
+🚀 **Live Demo:** [sauti-yetu-brand.streamlit.app](https://sauti-yetu-brand-djflh9zwtzfpsw6biv6ry6.streamlit.app)
+
 **Sauti Yetu** ("Our Voice") is an AI-powered feedback ingestion, classification, and brand sentiment platform. It captures consumer input in real time, routes severe grievances, isolates synthetic or bad-faith reports through an AI fraud quarantine, and synthesizes action briefs for brand managers and administrators.
 
 ---

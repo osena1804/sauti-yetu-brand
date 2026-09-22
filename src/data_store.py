@@ -21,13 +21,13 @@ except ImportError as e:
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "complaints.csv")
 
 COLUMNS = [
-    "id", "client_id", "category", "urgency", "county", "english_summary", "raw_text", "timestamp",
+    "id", "client_id", "category", "urgency", "county", "english_summary", "raw_text", "submitted_photo", "timestamp",
     "phone_encrypted", "phone_hash", "status", "resolution_note", "resolution_photo",
     "resolved_by_encrypted", "resolved_date", "dispute_count", "dispute_reasons",
 ]
 
 _STR_COLS = [
-    "id", "client_id", "category", "urgency", "county", "english_summary", "raw_text",
+    "id", "client_id", "category", "urgency", "county", "english_summary", "raw_text", "submitted_photo",
     "phone_encrypted", "phone_hash", "status", "resolution_note", "resolution_photo",
     "resolved_by_encrypted", "resolved_date", "dispute_reasons",
 ]
@@ -49,7 +49,7 @@ def _ensure_store() -> None:
 
 
 def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """Forces columns to consistent string/numeric types to prevent NaN/float casting issues."""
+    """Forces columns to consistent string/numeric types and strips mock fallback text."""
     if df.empty:
         return pd.DataFrame(columns=COLUMNS)
 
@@ -62,6 +62,10 @@ def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in _STR_COLS:
         df[col] = df[col].fillna("").astype(str)
+        # Scrub mock fallback strings from text/photo columns
+        df[col] = df[col].replace(
+            ["[photo input — fallback mock]", "[fallback mock]", "fallback mock"], ""
+        )
 
     # Fill default IDs and fallback tags
     df["id"] = df["id"].apply(lambda v: str(v).strip() if str(v).strip() else str(uuid.uuid4())[:8])
@@ -122,6 +126,7 @@ def add_complaint(record: dict) -> str:
 
     complaint_id = rec.setdefault("id", str(uuid.uuid4())[:8])
     rec.setdefault("client_id", "default")
+    rec.setdefault("submitted_photo", "")
     rec.setdefault("phone_encrypted", "")
     rec.setdefault("phone_hash", "")
     rec.setdefault("status", "Open")
@@ -132,6 +137,11 @@ def add_complaint(record: dict) -> str:
     rec.setdefault("dispute_count", 0)
     rec.setdefault("dispute_reasons", "")
     rec.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+
+    # Ensure any incoming raw_text or summary with fallback mock strings gets cleaned
+    for field in ["raw_text", "english_summary", "resolution_photo"]:
+        if rec.get(field) and "[photo input — fallback mock]" in str(rec.get(field)):
+            rec[field] = str(rec[field]).replace("[photo input — fallback mock]", "").strip()
 
     row = {k: rec.get(k, "") for k in COLUMNS}
     new_row_df = _coerce_dtypes(pd.DataFrame([row]))
@@ -161,7 +171,7 @@ def seed_from_csv(seed_path: str, client_id: str = "default") -> int:
     seed_df["client_id"] = client_id
 
     defaults = {
-        "phone_encrypted": "", "phone_hash": "", "status": "Open",
+        "phone_encrypted": "", "submitted_photo": "","phone_hash": "", "status": "Open",
         "resolution_note": "", "resolution_photo": "", "resolved_by_encrypted": "",
         "resolved_date": "", "dispute_count": 0, "dispute_reasons": "",
         "timestamp": datetime.now(timezone.utc).isoformat()

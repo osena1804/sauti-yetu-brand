@@ -5,8 +5,8 @@ Public Portal (consumer feedback dashboard) + Admin Portal (brand action briefs)
 
 import sys
 import os
+import uuid
 import tempfile
-import urllib.parse
 from datetime import datetime
 
 # Path setup for src module imports
@@ -101,17 +101,15 @@ with tab_submit:
                     os.remove(tmp_path)
 
         elif attached_photo is not None:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                tmp.write(attached_photo.getbuffer())
-                tmp_path = tmp.name
+            os.makedirs("data/submitted_photos", exist_ok=True)
+            permanent_path = os.path.join("data/submitted_photos", f"{uuid.uuid4().hex[:8]}.jpg")
+            with open(permanent_path, "wb") as f:
+                f.write(attached_photo.getbuffer())
 
-            try:
-                with st.spinner("Gemma is looking at your photo..."):
-                    record = gc.classify_complaint_image(tmp_path, client_id=client_choice)
-                    st.image(attached_photo, caption="Photo submitted", width=300)
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+            with st.spinner("Gemma is looking at your photo..."):
+                record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
+                record["submitted_photo"] = permanent_path
+                st.image(attached_photo, caption="Photo submitted", width=300)
 
         elif raw_text.strip():
             with st.spinner("Gemma is structuring your report..."):
@@ -190,6 +188,8 @@ with tab_public:
                     f"· *{int(row['days_unresolved'])} days unaddressed*  \n"
                     f"> {row['english_summary']}"
                 )
+                if row.get("submitted_photo") and os.path.exists(str(row["submitted_photo"])):
+                    st.image(row["submitted_photo"], width=250)
 
                 if row.get("status") == "Resolved":
                     with st.expander("🚩 This isn't actually fixed"):
@@ -207,14 +207,6 @@ with tab_public:
 
                 if row.get("status") in ("Resolved", "Disputed") and row.get("resolution_note"):
                     st.caption(f"Resolution claim: {row['resolution_note']} — signed off by {row['resolved_by']} on {row['resolved_date']}")
-
-                share_msg = (
-                    f"I reported a {row['category']} issue in {row['county']} county "
-                    f"{int(row['days_unresolved'])} days ago — still no update. "
-                    f"Reported via Sauti-Yetu: {row['english_summary']}"
-                )
-                wa_link = f"https://wa.me/?text={urllib.parse.quote(share_msg)}"
-                st.markdown(f"[📤 Share to WhatsApp]({wa_link})")
 
                 st.divider()
 
@@ -270,6 +262,10 @@ if tab_admin is not None:
                 }
                 chosen_label = st.selectbox("Select report to resolve", list(options.keys()))
                 chosen_id = options[chosen_label]
+                selected_row = open_complaints[open_complaints["id"] == chosen_id].iloc[0]
+                if selected_row.get("submitted_photo") and os.path.exists(selected_row["submitted_photo"]):
+                    st.image(selected_row["submitted_photo"], caption="Consumer-submitted photo", width=350)
+                st.write(f"**Reported as:** {selected_row['english_summary']}")
 
                 resolution_note = st.text_area(
                     "What was done to resolve it? (required)",
@@ -318,4 +314,4 @@ if tab_admin is not None:
 
         # Wire in Dispute Audit Dashboard scoped to the selected admin client
         st.divider()
-        render_admin_dispute_view(client_id="default")
+        render_admin_dispute_view(client_id=admin_client)

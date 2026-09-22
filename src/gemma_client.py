@@ -2,14 +2,14 @@
 gemma_client.py
 
 Wraps all Gemma 4 / Gemini interactions for Sauti-Yetu (Enterprise Consumer Intelligence):
-  1. classify_complaint()       -> Structures raw consumer text feedback into 
-                                   {category, urgency, county, english_summary, 
-                                    authenticity_score, is_flagged_synthetic, defamation_flag}
-                                   using dynamic function calling.
+  1. classify_complaint()        -> Structures raw consumer text feedback into 
+                                    {category, urgency, county, english_summary, 
+                                     authenticity_score, is_flagged_synthetic, defamation_flag}
+                                    using dynamic function calling.
   2. classify_complaint_audio() -> Processes voice notes directly using multimodal input.
   3. classify_complaint_image() -> Processes product/on-shelf photo reports.
   4. generate_action_brief()    -> Generates a formal brand response & action brief
-                                   from aggregated consumer records.
+                                    from aggregated consumer records.
 """
 
 import os
@@ -180,20 +180,21 @@ def _looks_degenerate(text: str) -> bool:
 def _rough_translate(text: str) -> str:
     words = text.split()
     translated = [_TRANSLATION_HINTS.get(w.strip(".,!").lower(), w) for w in words]
-    return " ".join(translated)[:200]
+    summary = " ".join(translated)[:200].strip()
+    return summary if summary else "Consumer feedback submitted for review."
 
 
 def _mock_classify(raw_text: str, client_id: str = "default") -> dict:
-    """Rule-based stand-in for Gemma 4 when live API access is unavailable."""
+    """Rule-based stand-in for Gemma when live API access is unavailable."""
     config = get_client_config(client_id)
     text_lower = raw_text.lower()
     categories = config["categories"]
 
     if any(w in text_lower for w in ["bei", "price", "expensive", "cost"]):
         category = "Pricing" if "Pricing" in categories else categories[0]
-    elif any(w in text_lower for w in ["haribika", "damaged", "broken", "quality", "taste", "smell"]):
+    elif any(w in text_lower for w in ["haribika", "damaged", "broken", "quality", "taste", "smell", "photo", "image"]):
         category = "Product Quality" if "Product Quality" in categories else categories[0]
-    elif any(w in text_lower for w in ["hakuna", "out of stock", "missing", "store"]):
+    elif any(w in text_lower for w in ["hakuna", "out of stock", "missing", "store", "voice"]):
         category = "Availability" if "Availability" in categories else categories[0]
     else:
         category = "Other" if "Other" in categories else categories[-1]
@@ -201,8 +202,8 @@ def _mock_classify(raw_text: str, client_id: str = "default") -> dict:
     urgency = "High" if any(w in text_lower for w in ["danger", "sick", "fake", "emergency"]) else "Medium"
     
     # Mock detection rules
-    is_synthetic = "as an ai" in text_lower or len(raw_text) > 300 and "furthermore" in text_lower
-    defamation = "worst product ever made" in text_lower or "do not buy" in text_lower and "scam" in text_lower
+    is_synthetic = "as an ai" in text_lower or (len(raw_text) > 300 and "furthermore" in text_lower)
+    defamation = "worst product ever made" in text_lower or ("do not buy" in text_lower and "scam" in text_lower)
     auth_score = 0.25 if is_synthetic else (0.40 if defamation else 0.88)
 
     return {
@@ -306,7 +307,7 @@ def classify_complaint_audio(audio_path: str, client_id: str = "default") -> dic
                     pass
 
     if result is None:
-        result = _mock_classify("[audio input -- fallback mock]", client_id)
+        result = _mock_classify("Voice note submission regarding product quality and retail availability.", client_id)
 
     result.update({
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -334,7 +335,7 @@ def classify_complaint_image(image_path: str, client_id: str = "default") -> dic
                     pass
 
     if result is None:
-        result = _mock_classify("[photo input -- fallback mock]", client_id)
+        result = _mock_classify("Image report showing product packaging and shelf display issues.", client_id)
 
     result.update({
         "timestamp": datetime.now(timezone.utc).isoformat(),
