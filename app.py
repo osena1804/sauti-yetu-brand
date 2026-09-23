@@ -134,11 +134,13 @@ if st.session_state.get("active_tab") == "submit":
                     photo_bytes = attached_photo.getvalue()
                     import io
                     img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
-                    img.thumbnail((1024, 1024))
+                    img.thumbnail((1024, 1024))   # ✅ resizing step
                     img.save(permanent_path, "JPEG", quality=80)
+
                     with st.spinner("Gemma is looking at your photo..."):
                         record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
-                    record["submitted_photo"] = permanent_path
+
+                    record["submitted_photo"] = permanent_path   # ✅ attach after classification
                     record["client_id"] = client_choice
 
                 if record:
@@ -170,7 +172,6 @@ if st.session_state.get("active_tab") == "submit":
                 if st.button("View complaints"):
                     st.session_state.active_tab = "public"
                     st.rerun()
-
             with col3:
                 if st.button("Go to Admin Portal"):
                     if st.session_state.is_admin:
@@ -179,6 +180,7 @@ if st.session_state.get("active_tab") == "submit":
                         st.rerun()
                     else:
                         st.warning("🔒 Admin access required. Please log in from the sidebar.")
+
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +208,7 @@ with tab_public:
     )
 
     df = ds.load_complaints(client_id=portal_client)
+    all_clients_df = ds.load_complaints()  # unfiltered, for the top-level totals
 
     viewing_single = False
     if st.session_state.get("view_id"):
@@ -221,9 +224,12 @@ with tab_public:
     else:
         if not viewing_single:
             col1, col2, col3 = st.columns(3)
-            col1.metric("Total reports", len(df))
-            col2.metric("High urgency (open)", int((df["urgency"] == "High").sum()))
-            col3.metric("Longest unresolved", f"{int(df['days_unresolved'].max())} days")
+            col1.metric("Total reports (all clients)", len(all_clients_df))
+            col2.metric("High urgency (open, all clients)", int((all_clients_df["urgency"] == "High").sum()))
+            col3.metric(
+                "Longest unresolved (all clients)",
+                f"{int(all_clients_df['days_unresolved'].max())} days" if not all_clients_df.empty else "0 days",
+            )
 
         counties = ["All"] + sorted(df["county"].dropna().unique().tolist())
         categories = ["All"] + sorted(df["category"].dropna().unique().tolist())
@@ -239,29 +245,23 @@ with tab_public:
 
         dash_col, clock_col = st.columns([1, 1]) if not viewing_single else (None, st)
 
-        # -------------------------------------------------------------------
+# -------------------------------------------------------------------
 # BUILT-IN BAR CHART BY COUNTY
 # -------------------------------------------------------------------
-if not viewing_single:
-    with dash_col:
-        st.markdown("#### 📊 Complaints Breakdown by County")
-        
-        if not view.empty and "county" in view.columns:
-            county_counts = view["county"].value_counts()
-            st.bar_chart(county_counts)
-        else:
-            st.info("No data available for selected filters.")
+        if not viewing_single:
+            with dash_col:
+                st.markdown("#### 📊 Complaints Breakdown by County")
+                if not view.empty and "county" in view.columns:
+                    county_counts = view["county"].value_counts()
+                    st.bar_chart(county_counts)
+                else:
+                    st.info("No data available for selected filters.")
 
-
-        # -------------------------------------------------------------------
-        # RESPONSIVE LIVE CLOCK & COMPLAINTS FEED
-        # -------------------------------------------------------------------
         with (clock_col if not viewing_single else st.container()):
             if not viewing_single:
                 st.markdown("#### ⏱️ Responsiveness Clock")
                 st.caption("Sorted by urgency, then by how long the issue has gone unaddressed.")
-                
-                # Live Javascript Clock Component
+
                 clock_html = """
                 <div style="
                     background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
@@ -277,7 +277,6 @@ if not viewing_single:
                     <div id="live-time" style="font-size: 1.8rem; font-weight: 700; color: #38BDF8; letter-spacing: 1px;">--:--:--</div>
                     <div id="live-date" style="font-size: 0.85rem; color: #94A3B8; margin-top: 2px;">Loading date...</div>
                 </div>
-
                 <script>
                     function updateClock() {
                         const now = new Date();
@@ -303,8 +302,7 @@ if not viewing_single:
                     f"· *{int(row.get('days_unresolved', 0))} days unaddressed*  \n"
                     f"> {row.get('english_summary', 'No summary available.')}"
                 )
-                #if row.get("submitted_photo") and os.path.exists(str(row["submitted_photo"])):
-                   # st.image(row["submitted_photo"], width=250)
+                # Photo intentionally hidden from the public dashboard -- admins see it in admin_dispute_view.py
 
                 if row.get("status") == "Resolved":
                     with st.expander("🚩 This isn't actually fixed"):
@@ -322,13 +320,6 @@ if not viewing_single:
 
                 if row.get("status") in ("Resolved", "Disputed") and row.get("resolution_note"):
                     st.caption(f"Resolution claim: {row['resolution_note']} — reviewed and signed off internally on {row.get('resolved_date', 'N/A')}")
-
-                share_msg = (
-                    f"I reported a {row.get('category','')} issue in {row.get('county','')} county "
-                    f"{int(row.get('days_unresolved', 0))} days ago. Reported via Sauti-Yetu: {row.get('english_summary','')}"
-                )
-                # wa_link = f"https://wa.me/?text={urllib.parse.quote(share_msg)}"
-                # st.markdown(f"[📤 Share to WhatsApp]({wa_link})")
 
                 st.divider()
 # ---------------------------------------------------------------------------
