@@ -250,10 +250,13 @@ with tab_public:
 # -------------------------------------------------------------------
         if not viewing_single:
             with dash_col:
-                st.markdown("#### 📊 Complaints Breakdown by County")
-                if not view.empty and "county" in view.columns:
-                    county_counts = view["county"].value_counts()
-                    st.bar_chart(county_counts)
+                st.markdown("#### 📊 Feedback Hotspots by County")
+                top_n = st.slider("Show top N counties by volume", 5, 20, 10, key="top_n_slider")
+                county_totals = view["county"].value_counts().head(top_n).index
+                county_view = view[view["county"].isin(county_totals)]
+                if not county_view.empty:
+                    county_breakdown = pd.crosstab(county_view["county"], county_view["category"])
+                    st.bar_chart(county_breakdown, stack=False)
                 else:
                     st.info("No data available for selected filters.")
 
