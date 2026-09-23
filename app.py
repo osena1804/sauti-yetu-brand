@@ -127,21 +127,20 @@ with tab_submit:
             os.makedirs("data/submitted_photos", exist_ok=True)
             permanent_path = os.path.join("data/submitted_photos", f"{uuid.uuid4().hex[:8]}.jpg")
 
-            # Process and downscale image to prevent stream bottlenecks
-            img = Image.open(attached_photo)
-            img = img.convert("RGB")
+            # 1. Read bytes once into memory to avoid stream exhaustion
+            photo_bytes = attached_photo.getvalue()
+
+            # 2. Open PIL Image from bytes and save to disk
+            import io
+            img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
             img.thumbnail((1024, 1024))
             img.save(permanent_path, "JPEG", quality=80)
-            
-            # Reset file pointer for buffer safety
-            if hasattr(attached_photo, "seek"):
-                attached_photo.seek(0)
 
             with st.spinner("Gemma is looking at your photo..."):
                 try:
                     record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
                 except Exception as e:
-                    st.warning(f"Classification hit an error, saving with basic info instead: {e}")
+                    st.warning(f"Classification hit an error, saving with basic info: {e}")
                     record = gc._mock_classify("Photo report submitted.", client_choice)
                     record.update({
                         "timestamp": datetime.now().isoformat(),
@@ -150,8 +149,9 @@ with tab_submit:
                         "status": "Open",
                     })
 
+                # Ensure image path and client details are attached to the record
                 record["submitted_photo"] = permanent_path
-                st.image(permanent_path, caption="Photo submitted", width=300)
+                record["client_id"] = client_choice
                 debug_error = record.pop("_debug_error", None)
 
         elif raw_text.strip():
@@ -244,8 +244,8 @@ with tab_public:
                     f"· *{days_unresolved} days unaddressed*  \n"
                     f"> {row.get('english_summary', 'No summary available.')}"
                 )
-                if row.get("submitted_photo") and os.path.exists(str(row["submitted_photo"])):
-                    st.image(row["submitted_photo"], width=250)
+               # if row.get("submitted_photo") and os.path.exists(str(row["submitted_photo"])):
+               #     st.image(row["submitted_photo"], width=250)
 
                 if row.get("status") == "Resolved":
                     with st.expander("🚩 This isn't actually fixed", expanded=False):

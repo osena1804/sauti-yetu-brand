@@ -370,6 +370,7 @@ def classify_complaint_image(image_path: str, client_id: str = "default") -> dic
         "raw_text": f"[photo input: {os.path.basename(image_path)}]",
         "client_id": client_id,
     })
+    result["submitted_photo"] = image_path
 
     return _apply_quarantine_rules(result)
 
