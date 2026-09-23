@@ -9,19 +9,20 @@ Streamlit view for Brand Managers & System Admin to:
 """
 
 import os
+import sqlite3
 import streamlit as st
 import pandas as pd
 
 import crypto_utils as crypto
 import sms_client as sms
-from data_store import load_complaints, mark_resolved, _save_df_atomic, _coerce_dtypes, DATA_PATH
-
+from data_store import load_complaints, mark_resolved, dispute_resolution, add_complaint
 try:
     from crypto_utils import decrypt_name
 except ImportError:
     def decrypt_name(token: str) -> str:
         return token if token else "Unknown"
 
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "complaints.db")
 
 def render_admin_dispute_view(client_id: str = "default"):
     st.title("🛡️ Admin Resolution & Fraud Audit Portal")
@@ -111,7 +112,6 @@ def render_admin_dispute_view(client_id: str = "default"):
         else:
             for idx, row in disputed_df.iterrows():
                 with st.expander(f"⚠️ Dispute Escalation - {row.get('category', 'General')} ({row['id']})"):
-                    # Check and display consumer photo
                     photo_path = str(row.get("submitted_photo", "")).strip()
                     if photo_path and os.path.exists(photo_path):
                         st.image(photo_path, caption="Original consumer-submitted photo evidence", width=350)
@@ -176,7 +176,6 @@ def render_admin_dispute_view(client_id: str = "default"):
 
                     st.markdown("---")
                     
-                    # Display consumer-submitted photo in quarantine view if present
                     photo_path = str(row.get("submitted_photo", "")).strip()
                     if photo_path and os.path.exists(photo_path):
                         st.image(photo_path, caption="Quarantined Photo Submission", width=350)
@@ -192,29 +191,4 @@ def render_admin_dispute_view(client_id: str = "default"):
                         if st.button("✅ Override & Move to Open", key=f"approve_{row['id']}"):
                             _update_complaint_status(row['id'], new_status="Open")
                             st.success(f"Record {row['id']} verified as genuine. Moved to Open Complaints.")
-                            st.rerun()
-
-                    with col_reject:
-                        if st.button("🗑️ Confirm Fraud & Archive", key=f"reject_{row['id']}"):
-                            _update_complaint_status(row['id'], new_status="Archived Fraud")
-                            st.warning(f"Record {row['id']} permanently archived as fraud.")
-                            st.rerun()
-
-
-def _update_complaint_status(complaint_id: str, new_status: str):
-    """Helper function to update status of a record directly in the CSV store."""
-    if not os.path.exists(DATA_PATH):
-        return
-
-    df = pd.read_csv(DATA_PATH)
-    df = _coerce_dtypes(df)
-    idx = df.index[df["id"] == complaint_id]
-
-    if len(idx) > 0:
-        df.loc[idx, "status"] = new_status
-        _save_df_atomic(df)
-
-
-def render_dispute_audit_dashboard(client_id: str = "default"):
-    """Backward compatibility alias for app.py."""
-    render_admin_dispute_view(client_id=client_id)
+                            st.rer

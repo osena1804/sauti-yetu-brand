@@ -7,3 +7,5 @@ data/_tmp_*
 .streamlit/secrets.toml
 *.log
 data/resolved_*.jpg
+data/complaints.db
+data/submitted_photos/
