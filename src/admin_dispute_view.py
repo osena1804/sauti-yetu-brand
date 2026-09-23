@@ -24,6 +24,14 @@ except ImportError:
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "complaints.db")
 
+def _update_complaint_status(complaint_id: str, new_status: str):
+    """Update the status of a complaint directly in SQLite."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("UPDATE complaints SET status = ? WHERE id = ?", (new_status, complaint_id))
+    conn.commit()
+    conn.close()
+
 def render_admin_dispute_view(client_id: str = "default"):
     st.title("🛡️ Admin Resolution & Fraud Audit Portal")
     st.caption(f"Active Client Scope: **{client_id}**")
@@ -50,7 +58,6 @@ def render_admin_dispute_view(client_id: str = "default"):
                 with st.expander(
                     f"[{row.get('urgency', 'Medium')}] {row.get('category', 'General')} - {row.get('county', 'N/A')} ({row['id']})"
                 ):
-                    # Check and display consumer photo
                     photo_path = str(row.get("submitted_photo", "")).strip()
                     if photo_path and os.path.exists(photo_path):
                         st.image(photo_path, caption="Consumer-submitted photo evidence", width=350)
@@ -187,8 +194,14 @@ def render_admin_dispute_view(client_id: str = "default"):
                     st.markdown("### Manager Override & Audit Actions")
                     col_approve, col_reject = st.columns(2)
 
-                    with col_approve:
-                        if st.button("✅ Override & Move to Open", key=f"approve_{row['id']}"):
-                            _update_complaint_status(row['id'], new_status="Open")
-                            st.success(f"Record {row['id']} verified as genuine. Moved to Open Complaints.")
-                            st.rer
+                with col_approve:
+                    if st.button("✅ Override & Move to Open", key=f"approve_{row['id']}"):
+                        _update_complaint_status(row['id'], new_status="Open")
+                        st.success(f"Record {row['id']} verified as genuine. Moved to Open Complaints.")
+                        st.rerun()
+
+                with col_reject:
+                    if st.button("❌ Confirm Fraud & Keep Quarantined", key=f"reject_{row['id']}"):
+                        _update_complaint_status(row['id'], new_status="Fraud")
+                        st.error(f"Record {row['id']} confirmed fraudulent. Status updated to Fraud.")
+                        st.rerun()

@@ -7,13 +7,9 @@ import os
 import sys
 import tempfile
 import uuid
-from datetime import datetime
-
-import pandas as pd
 import streamlit as st
 from PIL import Image
 
-# Safely handle imports whether modules are in root or in src/
 try:
     import crypto_utils as crypto
     import data_store as ds
@@ -26,22 +22,21 @@ except ModuleNotFoundError:
     import data_store as ds
     import gemma_client as gc
     import sms_client as sms
+    import pandas as pd
     from admin_dispute_view import render_admin_dispute_view
 
-# Page Configuration
 st.set_page_config(page_title="Sauti-Yetu", page_icon="📣", layout="wide")
 
-# Sidebar - Environment & Mode Checks
+# Sidebar connection status
 if getattr(gc, "FORCE_MOCK", False) or not getattr(gc, "GOOGLE_API_KEY", None):
     st.sidebar.warning("⚠️ Running in MOCK mode — no live Gemma connection")
 else:
     st.sidebar.success("✅ Live Gemma connected")
 
-# App Header
 st.title("📣 Sauti-Yetu")
 st.caption("Enterprise Consumer Intelligence — streaming, organic consumer feedback, powered by Gemma.")
 
-# Access Control (Supports OS environment variables AND Streamlit Cloud Secrets)
+# Admin access control
 admin_param = st.query_params.get("admin", "false").lower() == "true"
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
@@ -71,192 +66,255 @@ if st.session_state.is_admin:
         st.query_params.clear()
         st.rerun()
 
-# Dynamic Tab Configuration
+# Tab configuration with active_tab logic
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "submit"
+
 if st.session_state.is_admin:
-    tab_public, tab_admin, tab_submit = st.tabs(["🌍 Public Portal", "🏛️ Admin Portal", "📝 Submit a Report"])
+    tab_submit, tab_public, tab_admin = st.tabs(
+        ["📝 Submit a Report", "🌍 Public Portal", "🏛️ Admin Portal"]
+    )
 else:
-    tab_public, tab_submit = st.tabs(["🌍 Public Portal", "📝 Submit a Report"])
+    tab_submit, tab_public = st.tabs(["📝 Submit a Report", "🌍 Public Portal"])
     tab_admin = None
 
 # ---------------------------------------------------------------------------
-# SUBMIT TAB -- Multi-modal Input (Text, Mic, Photo)
+# SUBMIT TAB
 # ---------------------------------------------------------------------------
-with tab_submit:
-    st.subheader("Submit consumer feedback")
-    st.write("Type, speak, or attach a photo — Swahili, Sheng, or English, Gemma handles the rest.")
+if st.session_state.get("active_tab") == "submit":
+    with tab_submit:
+        st.subheader("📢 Welcome to Sauti-Yetu")
+        st.write("Please submit your complaint below. Type, speak, or attach a photo — Swahili, Sheng, or English, Gemma handles the rest.")
 
-    client_choice = st.selectbox(
-        "Client",
-        list(gc.CLIENT_CONFIGS.keys()),
-        format_func=lambda k: gc.CLIENT_CONFIGS[k]["display_name"],
-        key="submit_client",
-    )
-    raw_text = st.text_input("Type a message", placeholder="e.g. Bidhaa hii ilikuwa mbaya, dukani Kisumu...", key="input_raw_text")
-    phone = st.text_input("Phone number (optional — get an SMS when this is resolved)", placeholder="07XXXXXXXX", key="input_phone")
-    county_choice = st.selectbox("Select your county", sorted(gc.KENYA_COUNTIES), key="input_county")
+        if "submitted" not in st.session_state:
+            st.session_state.submitted = False
+            st.session_state.last_id = None
+            st.session_state.last_client = None
+            st.session_state.jump_admin = False
 
-    col_mic, col_photo = st.columns(2)
-    with col_mic:
-        st.markdown("🎙️ **Or record a voice note**")
-        recorded_audio = st.audio_input("Tap to record", key="input_audio")
-    with col_photo:
-        st.markdown("📎 **Or attach a photo**")
-        photo_source = st.radio("Photo source", ["Camera", "Upload"], horizontal=True, label_visibility="collapsed", key="input_photo_src")
-        if photo_source == "Camera":
-            attached_photo = st.camera_input("Take a photo", label_visibility="collapsed", key="input_camera")
-        else:
-            attached_photo = st.file_uploader("Upload a photo", type=["jpg", "jpeg", "png"], label_visibility="collapsed", key="input_upload")
+        if not st.session_state.submitted:
+            client_choice = st.selectbox(
+                "Client",
+                list(gc.CLIENT_CONFIGS.keys()),
+                format_func=lambda k: gc.CLIENT_CONFIGS[k]["display_name"],
+                key="submit_client",
+            )
+            raw_text = st.text_input("Type a message", placeholder="e.g. Bidhaa hii ilikuwa mbaya, dukani Kisumu...", key="input_raw_text")
+            phone = st.text_input("Phone number (optional)", placeholder="07XXXXXXXX", key="input_phone")
+            county_choice = st.selectbox("Select your county", sorted(gc.KENYA_COUNTIES), key="input_county")
 
-    if st.button("Send report", type="primary", key="send_report_btn"):
-        record = None
-        debug_error = None
+            col_mic, col_photo = st.columns(2)
+            with col_mic:
+                st.markdown("🎙️ **Or record a voice note**")
+                recorded_audio = st.audio_input("Tap to record", key="input_audio")
+            with col_photo:
+                st.markdown("📎 **Or attach a photo**")
+                photo_source = st.radio("Photo source", ["Camera", "Upload"], horizontal=True, label_visibility="collapsed", key="input_photo_src")
+                if photo_source == "Camera":
+                    attached_photo = st.camera_input("Take a photo", label_visibility="collapsed", key="input_camera")
+                else:
+                    attached_photo = st.file_uploader("Upload a photo", type=["jpg", "jpeg", "png"], label_visibility="collapsed", key="input_upload")
 
-        if recorded_audio is not None:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                tmp.write(recorded_audio.getbuffer())
-                tmp_path = tmp.name
+            if st.button("Submit Complaint", type="primary", key="send_report_btn"):
+                record = None
 
-            try:
-                with st.spinner("Gemma is processing your voice note..."):
-                    record = gc.classify_complaint_audio(tmp_path, client_id=client_choice)
-            finally:
-                if os.path.exists(tmp_path):
+                if raw_text.strip():
+                    with st.spinner("Gemma is structuring your report..."):
+                        record = gc.classify_complaint(raw_text, client_id=client_choice)
+                elif recorded_audio is not None:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                        tmp.write(recorded_audio.getbuffer())
+                        tmp_path = tmp.name
+                    with st.spinner("Gemma is processing your voice note..."):
+                        record = gc.classify_complaint_audio(tmp_path, client_id=client_choice)
                     os.remove(tmp_path)
+                elif attached_photo is not None:
+                    os.makedirs("data/submitted_photos", exist_ok=True)
+                    permanent_path = os.path.join("data/submitted_photos", f"{uuid.uuid4().hex[:8]}.jpg")
+                    photo_bytes = attached_photo.getvalue()
+                    import io
+                    img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
+                    img.thumbnail((1024, 1024))
+                    img.save(permanent_path, "JPEG", quality=80)
+                    with st.spinner("Gemma is looking at your photo..."):
+                        record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
+                    record["submitted_photo"] = permanent_path
+                    record["client_id"] = client_choice
 
-        elif attached_photo is not None:
-            os.makedirs("data/submitted_photos", exist_ok=True)
-            permanent_path = os.path.join("data/submitted_photos", f"{uuid.uuid4().hex[:8]}.jpg")
+                if record:
+                    # Ensure every record has a unique id
+                    if "id" not in record or not record["id"]:
+                        record["id"] = uuid.uuid4().hex
 
-            # 1. Read bytes once into memory to avoid stream exhaustion
-            photo_bytes = attached_photo.getvalue()
+                    record["phone_encrypted"] = crypto.encrypt_phone(phone) if phone else None
+                    record["phone_hash"] = crypto.hash_phone(phone) if phone else None
+                    record["county"] = county_choice
+                    ds.add_complaint(record)
 
-            # 2. Open PIL Image from bytes and save to disk
-            import io
-            img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
-            img.thumbnail((1024, 1024))
-            img.save(permanent_path, "JPEG", quality=80)
-
-            with st.spinner("Gemma is looking at your photo..."):
-                try:
-                    record = gc.classify_complaint_image(permanent_path, client_id=client_choice)
-                except Exception as e:
-                    st.warning(f"Classification hit an error, saving with basic info: {e}")
-                    record = gc._mock_classify("Photo report submitted.", client_choice)
-                    record.update({
-                        "timestamp": datetime.now().isoformat(),
-                        "raw_text": f"[photo report: {os.path.basename(permanent_path)}]",
-                        "client_id": client_choice,
-                        "status": "Open",
-                    })
-
-                # Ensure image path and client details are attached to the record
-                record["submitted_photo"] = permanent_path
-                record["client_id"] = client_choice
-                debug_error = record.pop("_debug_error", None)
-
-        elif raw_text.strip():
-            with st.spinner("Gemma is structuring your report..."):
-                record = gc.classify_complaint(raw_text, client_id=client_choice)
+                    st.session_state.submitted = True
+                    st.session_state.last_id = record.get("id")
+                    st.session_state.last_client = client_choice
+                    st.rerun()
 
         else:
-            st.warning("Type a message, record a voice note, or attach a photo before sending.")
+            st.success("✅ Thank you! Your complaint has been submitted.")
 
-        if record:
-            record["phone_encrypted"] = crypto.encrypt_phone(phone) if phone else None
-            record["phone_hash"] = crypto.hash_phone(phone) if phone else None
-            record["county"] = county_choice
-            ds.add_complaint(record)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("Submit another complaint"):
+                    st.session_state.submitted = False
+                    st.session_state.last_id = None
+                    st.session_state.active_tab = "submit"
+                    st.rerun()
+            with col2:
+                if st.button("View complaints"):
+                    st.session_state.active_tab = "public"
+                    st.rerun()
 
-            st.success(f"Logged as **{record.get('category', 'General')}** ({record.get('urgency', 'Low')} urgency) — {county_choice}")
+            with col3:
+                if st.button("Go to Admin Portal"):
+                    if st.session_state.is_admin:
+                        st.session_state.jump_admin = True
+                        st.session_state.active_tab = "admin"
+                        st.rerun()
+                    else:
+                        st.warning("🔒 Admin access required. Please log in from the sidebar.")
 
-            if debug_error:
-                with st.expander("⚠️ Debug: Why this report used fallback mode"):
-                    st.code(debug_error)
 
 # ---------------------------------------------------------------------------
-# PUBLIC PORTAL -- Feedback Dashboard & Responsiveness Clock
+# PUBLIC PORTAL
 # ---------------------------------------------------------------------------
 with tab_public:
+    import urllib.parse
+    import os
+    import pandas as pd
+    import streamlit.components.v1 as components
+
     st.subheader("Consumer feedback dashboard")
+
+    keys = list(gc.CLIENT_CONFIGS.keys())
+    default_client = st.session_state.get("last_client", keys[0])
+    if default_client not in keys:
+        default_client = keys[0]
 
     portal_client = st.selectbox(
         "Viewing client",
-        list(gc.CLIENT_CONFIGS.keys()),
+        keys,
         format_func=lambda k: gc.CLIENT_CONFIGS[k]["display_name"],
+        index=keys.index(default_client),
         key="public_client",
     )
+
     df = ds.load_complaints(client_id=portal_client)
 
-    if df.empty:
-        st.info("No feedback yet for this client. Submit one under the 'Submit a Report' tab.")
-    else:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total reports", len(df))
-        high_urgency_count = int((df["urgency"] == "High").sum()) if "urgency" in df.columns else 0
-        max_days = int(df['days_unresolved'].max()) if "days_unresolved" in df.columns and not df['days_unresolved'].isnull().all() else 0
-        col2.metric("High urgency (open)", high_urgency_count)
-        col3.metric("Longest unresolved", f"{max_days} days")
+    viewing_single = False
+    if st.session_state.get("view_id"):
+        single_df = df[df["id"] == st.session_state.view_id]
+        if not single_df.empty:
+            df = single_df
+            viewing_single = True
+            st.success("Showing your latest complaint:")
+        st.session_state.view_id = None
 
-        counties = ["All"] + sorted(df["county"].dropna().unique().tolist()) if "county" in df.columns else ["All"]
-        categories = ["All"] + sorted(df["category"].dropna().unique().tolist()) if "category" in df.columns else ["All"]
-        
+    if df.empty:
+        st.info("No feedback yet for this client.")
+    else:
+        if not viewing_single:
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total reports", len(df))
+            col2.metric("High urgency (open)", int((df["urgency"] == "High").sum()))
+            col3.metric("Longest unresolved", f"{int(df['days_unresolved'].max())} days")
+
+        counties = ["All"] + sorted(df["county"].dropna().unique().tolist())
+        categories = ["All"] + sorted(df["category"].dropna().unique().tolist())
         c1, c2 = st.columns(2)
         county_filter = c1.selectbox("Filter by county", counties, key="public_county_filter")
         category_filter = c2.selectbox("Filter by category", categories, key="public_cat_filter")
 
         view = df.copy()
-        if county_filter != "All" and "county" in view.columns:
+        if county_filter != "All":
             view = view[view["county"] == county_filter]
-        if category_filter != "All" and "category" in view.columns:
+        if category_filter != "All":
             view = view[view["category"] == category_filter]
 
-        dash_col, clock_col = st.columns([1, 1])
+        dash_col, clock_col = st.columns([1, 1]) if not viewing_single else (None, st)
 
-        with dash_col:
-            st.markdown("#### 📊 Feedback Hotspots by County")
-            top_n = st.slider("Show top N counties by volume", 5, 20, 10, key="top_n_slider")
-            if "county" in view.columns and not view.empty:
-                county_totals = view["county"].value_counts().head(top_n).index
-                county_view = view[view["county"].isin(county_totals)]
-
-                if not county_view.empty and "category" in county_view.columns:
-                    county_breakdown = pd.crosstab(county_view["county"], county_view["category"])
-                    st.bar_chart(county_breakdown, stack=False)
+        # -------------------------------------------------------------------
+        # BUILT-IN BAR CHART BY CATEGORY
+        # -------------------------------------------------------------------
+        if not viewing_single:
+            with dash_col:
+                st.markdown("#### 📊 Complaints Breakdown by Category")
+                
+                if not view.empty and "category" in view.columns:
+                    cat_counts = view["category"].value_counts()
+                    st.bar_chart(cat_counts)
                 else:
-                    st.info("No breakdown data available for selected filters.")
-            else:
-                st.info("No data available for selected filters.")
+                    st.info("No data available for selected filters.")
 
-        with clock_col:
-            st.markdown("#### ⏱️ Responsiveness Clock")
-            st.caption("Sorted by urgency, then by how long the issue has gone unaddressed.")
+        # -------------------------------------------------------------------
+        # RESPONSIVE LIVE CLOCK & COMPLAINTS FEED
+        # -------------------------------------------------------------------
+        with (clock_col if not viewing_single else st.container()):
+            if not viewing_single:
+                st.markdown("#### ⏱️ Responsiveness Clock")
+                st.caption("Sorted by urgency, then by how long the issue has gone unaddressed.")
+                
+                # Live Javascript Clock Component
+                clock_html = """
+                <div style="
+                    background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+                    border: 1px solid #334155;
+                    border-radius: 10px;
+                    padding: 12px 16px;
+                    text-align: center;
+                    color: #F8FAFC;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+                    margin-bottom: 15px;
+                ">
+                    <div id="live-time" style="font-size: 1.8rem; font-weight: 700; color: #38BDF8; letter-spacing: 1px;">--:--:--</div>
+                    <div id="live-date" style="font-size: 0.85rem; color: #94A3B8; margin-top: 2px;">Loading date...</div>
+                </div>
+
+                <script>
+                    function updateClock() {
+                        const now = new Date();
+                        const timeOptions = { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' };
+                        const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+                        document.getElementById('live-time').textContent = now.toLocaleTimeString('en-US', timeOptions);
+                        document.getElementById('live-date').textContent = now.toLocaleDateString('en-US', dateOptions);
+                    }
+                    setInterval(updateClock, 1000);
+                    updateClock();
+                </script>
+                """
+                components.html(clock_html, height=95)
 
             status_badge = {"Open": "", "Resolved": "✅ **Resolved**", "Disputed": "⚠️ **Disputed by consumer**"}
 
             for _, row in view.iterrows():
-                row_id = str(row.get("id", uuid.uuid4().hex))
                 urgency_color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(row.get("urgency"), "⚪")
                 badge = status_badge.get(row.get("status"), "")
-                days_unresolved = int(row.get('days_unresolved', 0)) if pd.notnull(row.get('days_unresolved')) else 0
 
                 st.markdown(
                     f"{urgency_color} **{row.get('category', 'General')}** — {row.get('county', 'Unknown')} {badge}  \n"
-                    f"· *{days_unresolved} days unaddressed*  \n"
+                    f"· *{int(row.get('days_unresolved', 0))} days unaddressed*  \n"
                     f"> {row.get('english_summary', 'No summary available.')}"
                 )
-               # if row.get("submitted_photo") and os.path.exists(str(row["submitted_photo"])):
-               #     st.image(row["submitted_photo"], width=250)
+                #if row.get("submitted_photo") and os.path.exists(str(row["submitted_photo"])):
+                   # st.image(row["submitted_photo"], width=250)
 
                 if row.get("status") == "Resolved":
-                    with st.expander("🚩 This isn't actually fixed", expanded=False):
+                    with st.expander("🚩 This isn't actually fixed"):
                         dispute_reason = st.text_area(
                             "Why do you think this isn't resolved?",
-                            key=f"reason_{row_id}",
+                            key=f"reason_{row['id']}",
                             placeholder="e.g. I bought the same batch again yesterday, still an issue.",
                         )
-                        if st.button("Submit dispute", key=f"dispute_btn_{row_id}"):
+                        if st.button("Submit dispute", key=f"dispute_btn_{row['id']}"):
                             if dispute_reason.strip():
-                                ds.dispute_resolution(row.get("id"), dispute_reason.strip())
+                                ds.dispute_resolution(row["id"], dispute_reason.strip())
                                 st.rerun()
                             else:
                                 st.warning("Please explain why you're disputing this.")
@@ -264,6 +322,14 @@ with tab_public:
                 if row.get("status") in ("Resolved", "Disputed") and row.get("resolution_note"):
                     st.caption(f"Resolution claim: {row['resolution_note']} — reviewed and signed off internally on {row.get('resolved_date', 'N/A')}")
 
+                share_msg = (
+                    f"I reported a {row.get('category','')} issue in {row.get('county','')} county "
+                    f"{int(row.get('days_unresolved', 0))} days ago. Reported via Sauti-Yetu: {row.get('english_summary','')}"
+                )
+                # wa_link = f"https://wa.me/?text={urllib.parse.quote(share_msg)}"
+                # st.markdown(f"[📤 Share to WhatsApp]({wa_link})")
+
+                st.divider()
 # ---------------------------------------------------------------------------
 # ADMIN PORTAL -- Cluster Gap Detector & Brief Generator
 # ---------------------------------------------------------------------------
