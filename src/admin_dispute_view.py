@@ -61,7 +61,15 @@ def render_admin_dispute_view(client_id: str = "default"):
                     photo_path = str(row.get("submitted_photo", "")).strip()
                     if photo_path and os.path.exists(photo_path):
                         st.image(photo_path, caption="Consumer-submitted photo evidence", width=350)
-
+                        with open(photo_path, "rb") as f:
+                            st.download_button(
+                                label="⬇️ Download Photo",
+                                data=f,
+                                file_name=os.path.basename(photo_path),
+                                mime="image/jpeg",
+                                key=f"download_{row['id']}"
+                            )
+                        
                     st.write(f"**Summary:** {row.get('english_summary', 'No summary available')}")
                     st.write(f"**Raw Consumer Input:** {row.get('raw_text', 'N/A')}")
                     st.caption(f"Reported On: {row.get('timestamp', 'N/A')} | Days Open: {row.get('days_unresolved', 0)}")
@@ -122,6 +130,14 @@ def render_admin_dispute_view(client_id: str = "default"):
                     photo_path = str(row.get("submitted_photo", "")).strip()
                     if photo_path and os.path.exists(photo_path):
                         st.image(photo_path, caption="Original consumer-submitted photo evidence", width=350)
+                        with open(photo_path, "rb") as f:
+                            st.download_button(
+                                label="⬇️ Download Photo",
+                                data=f,
+                                file_name=os.path.basename(photo_path),
+                                mime="image/jpeg",
+                                key=f"download_{row['id']}"
+                            )
 
                     st.write(f"**Original Summary:** {row.get('english_summary', 'N/A')}")
                     st.write(f"**Previous Resolution Note:** {row.get('resolution_note', 'N/A')}")
@@ -186,6 +202,14 @@ def render_admin_dispute_view(client_id: str = "default"):
                     photo_path = str(row.get("submitted_photo", "")).strip()
                     if photo_path and os.path.exists(photo_path):
                         st.image(photo_path, caption="Quarantined Photo Submission", width=350)
+                        with open(photo_path, "rb") as f:
+                            st.download_button(
+                                label="⬇️ Download Photo",
+                                data=f,
+                                file_name=os.path.basename(photo_path),
+                                mime="image/jpeg",
+                                key=f"download_{row['id']}"
+                            )
 
                     st.write(f"**English Summary:** {row.get('english_summary', 'N/A')}")
                     st.write(f"**Raw Text:** {row.get('raw_text', 'N/A')}")
