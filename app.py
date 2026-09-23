@@ -240,17 +240,18 @@ with tab_public:
         dash_col, clock_col = st.columns([1, 1]) if not viewing_single else (None, st)
 
         # -------------------------------------------------------------------
-        # BUILT-IN BAR CHART BY CATEGORY
-        # -------------------------------------------------------------------
-        if not viewing_single:
-            with dash_col:
-                st.markdown("#### 📊 Complaints Breakdown by Category")
-                
-                if not view.empty and "category" in view.columns:
-                    cat_counts = view["category"].value_counts()
-                    st.bar_chart(cat_counts)
-                else:
-                    st.info("No data available for selected filters.")
+# BUILT-IN BAR CHART BY COUNTY
+# -------------------------------------------------------------------
+if not viewing_single:
+    with dash_col:
+        st.markdown("#### 📊 Complaints Breakdown by County")
+        
+        if not view.empty and "county" in view.columns:
+            county_counts = view["county"].value_counts()
+            st.bar_chart(county_counts)
+        else:
+            st.info("No data available for selected filters.")
+
 
         # -------------------------------------------------------------------
         # RESPONSIVE LIVE CLOCK & COMPLAINTS FEED
