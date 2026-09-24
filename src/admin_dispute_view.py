@@ -16,6 +16,7 @@ import pandas as pd
 import crypto_utils as crypto
 import sms_client as sms
 from data_store import load_complaints, mark_resolved, dispute_resolution, add_complaint
+
 try:
     from crypto_utils import decrypt_name
 except ImportError:
@@ -23,6 +24,7 @@ except ImportError:
         return token if token else "Unknown"
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "complaints.db")
+
 
 def _update_complaint_status(complaint_id: str, new_status: str):
     """Update the status of a complaint directly in SQLite."""
@@ -32,6 +34,7 @@ def _update_complaint_status(complaint_id: str, new_status: str):
     conn.commit()
     conn.close()
 
+
 def render_admin_dispute_view(client_id: str = "default"):
     st.title("🛡️ Admin Resolution & Fraud Audit Portal")
     st.caption(f"Active Client Scope: **{client_id}**")
@@ -39,15 +42,27 @@ def render_admin_dispute_view(client_id: str = "default"):
     # Fetch all complaints for this client
     df_all = load_complaints(client_id=client_id)
 
-    # Tab layout
-    tab_open, tab_disputed, tab_quarantine = st.tabs(
-        ["📋 Open Complaints", "⚠️ Disputed Resolutions", "☣️ Quarantined & Fraud Audit"]
+    # 1. Initialize persistent tab state
+    if "active_tab" not in st.session_state:
+        st.session_state["active_tab"] = "📋 Open Complaints"
+
+    # 2. Render persistent tab selection bar
+    tab_options = ["📋 Open Complaints", "⚠️ Disputed Resolutions", "☣️ Quarantined & Fraud Audit"]
+    
+    st.session_state["active_tab"] = st.radio(
+        label="Navigation Tabs",
+        options=tab_options,
+        index=tab_options.index(st.session_state["active_tab"]),
+        horizontal=True,
+        label_visibility="collapsed"
     )
+
+    st.markdown("---")
 
     # ---------------------------------------------------------------------------
     # TAB 1: OPEN COMPLAINTS
     # ---------------------------------------------------------------------------
-    with tab_open:
+    if st.session_state["active_tab"] == "📋 Open Complaints":
         open_df = df_all[df_all["status"] == "Open"].copy()
         st.subheader(f"Open Action Items ({len(open_df)})")
 
@@ -64,12 +79,14 @@ def render_admin_dispute_view(client_id: str = "default"):
                         with open(photo_path, "rb") as f:
                             st.download_button(
                                 label="⬇️ Download Photo",
-                                data=f,
+                                data=f.read(),
                                 file_name=os.path.basename(photo_path),
                                 mime="image/jpeg",
-                                key=f"download_{row['id']}"
+                                key=f"open_download_{row['id']}"
                             )
-                        
+                    elif photo_path:
+                        st.caption("📷 Photo attached (file path exists in DB, but missing on server)")
+
                     st.write(f"**Summary:** {row.get('english_summary', 'No summary available')}")
                     st.write(f"**Raw Consumer Input:** {row.get('raw_text', 'N/A')}")
                     st.caption(f"Reported On: {row.get('timestamp', 'N/A')} | Days Open: {row.get('days_unresolved', 0)}")
@@ -118,7 +135,7 @@ def render_admin_dispute_view(client_id: str = "default"):
     # ---------------------------------------------------------------------------
     # TAB 2: DISPUTED RESOLUTIONS
     # ---------------------------------------------------------------------------
-    with tab_disputed:
+    elif st.session_state["active_tab"] == "⚠️ Disputed Resolutions":
         disputed_df = df_all[df_all["status"] == "Disputed"].copy()
         st.subheader(f"Escalated Disputes ({len(disputed_df)})")
 
@@ -133,11 +150,13 @@ def render_admin_dispute_view(client_id: str = "default"):
                         with open(photo_path, "rb") as f:
                             st.download_button(
                                 label="⬇️ Download Photo",
-                                data=f,
+                                data=f.read(),
                                 file_name=os.path.basename(photo_path),
                                 mime="image/jpeg",
-                                key=f"download_{row['id']}"
+                                key=f"dispute_download_{row['id']}"
                             )
+                    elif photo_path:
+                        st.caption("📷 Photo attached (file path exists in DB, but missing on server)")
 
                     st.write(f"**Original Summary:** {row.get('english_summary', 'N/A')}")
                     st.write(f"**Previous Resolution Note:** {row.get('resolution_note', 'N/A')}")
@@ -170,7 +189,7 @@ def render_admin_dispute_view(client_id: str = "default"):
     # ---------------------------------------------------------------------------
     # TAB 3: QUARANTINED & FRAUD AUDIT
     # ---------------------------------------------------------------------------
-    with tab_quarantine:
+    elif st.session_state["active_tab"] == "☣️ Quarantined & Fraud Audit":
         quarantine_df = df_all[df_all["status"] == "Quarantined"].copy()
         st.subheader(f"Quarantined Records ({len(quarantine_df)})")
         st.caption(
@@ -205,11 +224,13 @@ def render_admin_dispute_view(client_id: str = "default"):
                         with open(photo_path, "rb") as f:
                             st.download_button(
                                 label="⬇️ Download Photo",
-                                data=f,
+                                data=f.read(),
                                 file_name=os.path.basename(photo_path),
                                 mime="image/jpeg",
-                                key=f"download_{row['id']}"
+                                key=f"quarantine_download_{row['id']}"
                             )
+                    elif photo_path:
+                        st.caption("📷 Photo attached (file path exists in DB, but missing on server)")
 
                     st.write(f"**English Summary:** {row.get('english_summary', 'N/A')}")
                     st.write(f"**Raw Text:** {row.get('raw_text', 'N/A')}")
@@ -218,14 +239,14 @@ def render_admin_dispute_view(client_id: str = "default"):
                     st.markdown("### Manager Override & Audit Actions")
                     col_approve, col_reject = st.columns(2)
 
-                with col_approve:
-                    if st.button("✅ Override & Move to Open", key=f"approve_{row['id']}"):
-                        _update_complaint_status(row['id'], new_status="Open")
-                        st.success(f"Record {row['id']} verified as genuine. Moved to Open Complaints.")
-                        st.rerun()
+                    with col_approve:
+                        if st.button("✅ Override & Move to Open", key=f"approve_{row['id']}"):
+                            _update_complaint_status(row['id'], new_status="Open")
+                            st.success(f"Record {row['id']} verified as genuine. Moved to Open Complaints.")
+                            st.rerun()
 
-                with col_reject:
-                    if st.button("❌ Confirm Fraud & Keep Quarantined", key=f"reject_{row['id']}"):
-                        _update_complaint_status(row['id'], new_status="Fraud")
-                        st.error(f"Record {row['id']} confirmed fraudulent. Status updated to Fraud.")
-                        st.rerun()
+                    with col_reject:
+                        if st.button("❌ Confirm Fraud & Keep Quarantined", key=f"reject_{row['id']}"):
+                            _update_complaint_status(row['id'], new_status="Fraud")
+                            st.error(f"Record {row['id']} confirmed fraudulent. Status updated to Fraud.")
+                            st.rerun()

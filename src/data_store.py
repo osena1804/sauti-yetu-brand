@@ -28,34 +28,46 @@ COLUMNS = [
 ]
 
 def _ensure_store():
-    """Ensures SQLite DB and table exist."""
+    """Ensures SQLite DB and table exist, auto-recovering from corruption."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(f"""
-    CREATE TABLE IF NOT EXISTS complaints (
-        id TEXT PRIMARY KEY,
-        client_id TEXT,
-        category TEXT,
-        urgency TEXT,
-        county TEXT,
-        english_summary TEXT,
-        raw_text TEXT,
-        submitted_photo TEXT,
-        timestamp TEXT,
-        phone_encrypted TEXT,
-        phone_hash TEXT,
-        status TEXT,
-        resolution_note TEXT,
-        resolution_photo TEXT,
-        resolved_by_encrypted TEXT,
-        resolved_date TEXT,
-        dispute_count INTEGER,
-        dispute_reasons TEXT
-    )
-    """)
-    conn.commit()
-    conn.close()
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS complaints (
+            id TEXT PRIMARY KEY,
+            client_id TEXT,
+            category TEXT,
+            urgency TEXT,
+            county TEXT,
+            english_summary TEXT,
+            raw_text TEXT,
+            submitted_photo TEXT,
+            timestamp TEXT,
+            phone_encrypted TEXT,
+            phone_hash TEXT,
+            status TEXT,
+            resolution_note TEXT,
+            resolution_photo TEXT,
+            resolved_by_encrypted TEXT,
+            resolved_date TEXT,
+            dispute_count INTEGER,
+            dispute_reasons TEXT
+        )
+        """)
+        conn.commit()
+        conn.close()
+    except sqlite3.DatabaseError as e:
+        # If the disk image is malformed, delete the corrupt file and recreate it cleanly
+        if "malformed" in str(e).lower() or "corrupt" in str(e).lower():
+            if 'conn' in locals():
+                conn.close()
+            if os.path.exists(DB_PATH):
+                os.remove(DB_PATH)
+            _ensure_store()  # Retry initialization with a fresh database file
+        else:
+            raise e
 
 def add_complaint(record: dict) -> str:
     """Insert a new complaint into SQLite."""
@@ -140,30 +152,44 @@ def mark_resolved(complaint_id: str, note: str, resolved_by: str,
     conn.close()
     return df.iloc[0].to_dict()
 
-def dispute_resolution(complaint_id: str, reason: str, reopen_threshold: int = 2) -> dict:
-    """Dispute a resolved complaint. Reopen if threshold reached."""
+def dispute_resolution(complaint_id: str, reason: str, reopen_threshold: int = 1) -> dict:
+    """Dispute a resolved complaint. Updates dispute history and sets status to Disputed."""
     _ensure_store()
     conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+    
+    try:
+        df = pd.read_sql_query("SELECT * FROM complaints WHERE id = ?", conn, params=(complaint_id,))
+        if df.empty:
+            raise ValueError(f"No record found with id {complaint_id}")
 
-    df = pd.read_sql_query("SELECT * FROM complaints WHERE id = ?", conn, params=(complaint_id,))
-    if df.empty:
+        # Safely handle potential NaN or None values from Pandas/SQLite
+        raw_reasons = df.loc[0, "dispute_reasons"]
+        existing_reasons = "" if pd.isna(raw_reasons) or not raw_reasons else str(raw_reasons)
+
+        raw_count = df.loc[0, "dispute_count"]
+        current_count = 1 if (pd.isna(raw_count) or not raw_count) else int(raw_count) + 1
+
+        timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+        formatted_entry = f"[{timestamp}] {reason.strip()}"
+        combined_reasons = f"{existing_reasons}\n{formatted_entry}" if existing_reasons else formatted_entry
+
+        # Instantly set to 'Disputed' once threshold is reached (default 1)
+        new_status = "Disputed" if current_count >= reopen_threshold else str(df.loc[0, "status"])
+
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE complaints
+            SET dispute_reasons = ?,
+                dispute_count = ?,
+                status = ?
+            WHERE id = ?
+        """, (combined_reasons, current_count, new_status, complaint_id))
+        
+        conn.commit()
+
+        # Retrieve updated record
+        updated_df = pd.read_sql_query("SELECT * FROM complaints WHERE id = ?", conn, params=(complaint_id,))
+        return updated_df.iloc[0].to_dict()
+
+    finally:
         conn.close()
-        raise ValueError(f"No record found with id {complaint_id}")
-
-    existing_reasons = df.loc[0, "dispute_reasons"] or ""
-    combined_reasons = f"{existing_reasons} | {reason}" if existing_reasons else reason
-    current_count = int(df.loc[0, "dispute_count"] or 0) + 1
-
-    new_status = "Disputed" if current_count >= reopen_threshold else df.loc[0, "status"]
-
-    cur.execute("""
-        UPDATE complaints
-        SET dispute_reasons = ?, dispute_count = ?, status = ?
-        WHERE id = ?
-    """, (combined_reasons, current_count, new_status, complaint_id))
-    conn.commit()
-
-    df = pd.read_sql_query("SELECT * FROM complaints WHERE id = ?", conn, params=(complaint_id,))
-    conn.close()
-    return df.iloc[0].to_dict()
