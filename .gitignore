@@ -1,11 +1,26 @@
-venv/
+# Secrets — never commit real values
+.env
+.env.*
+
+# Local database and generated caches
+sauti_yetu.db
+score_cache.json
+brief_cache.json
+
+# Local Database & User-Uploaded Media
+data/*.db
+data/submitted_photos/
+data/resolved_*.jpg
+
+# Uploaded photo evidence (submitted during demos/testing)
+uploads/
+static/uploads/
+
+# Python
 __pycache__/
 *.pyc
-.env
-data/complaints.csv
-data/_tmp_*
+venv/
+.venv/
+
+# Streamlit
 .streamlit/secrets.toml
-*.log
-data/resolved_*.jpg
-data/complaints.db
-data/submitted_photos/
