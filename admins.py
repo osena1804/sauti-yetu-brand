@@ -22,6 +22,29 @@ AUDITOR_PHONE = os.environ.get("SAUTI_AUDITOR_PHONE", "+254700000000")
 JWANJIRU_PASSWORD = os.environ.get("SAUTI_JWANJIRU_PASSWORD", "ChangeMe-placeholder-1")
 KOTIENO_PASSWORD = os.environ.get("SAUTI_KOTIENO_PASSWORD", "ChangeMe-placeholder-2")
 
+def seed_admin_accounts():
+    """Seeds default admin users into the database safely."""
+    try:
+        db.update_admin_phone("kotieno", AUDITOR_PHONE)
+    except Exception as e:
+        print("phone update error:", e)
+
+    try:
+        db.create_admin("jwanjiru", JWANJIRU_PASSWORD, "Jane Wanjiru", role="brand_manager")
+        print("Created brand_manager: jwanjiru")
+    except Exception as e:
+        print("jwanjiru:", e)
+
+    try:
+        db.create_admin("kotieno", KOTIENO_PASSWORD, "Ken Otieno", role="auditor")
+        print("Created auditor: kotieno")
+    except Exception as e:
+        print("kotieno:", e)
+
+# Allows running directly via `python admins.py`
+if __name__ == "__main__":
+    seed_admin_accounts()
+
 if AUDITOR_PHONE == "+254700000000":
     print("[create_demo_admins] WARNING: using placeholder phone. Set SAUTI_AUDITOR_PHONE for real SMS delivery.")
 if JWANJIRU_PASSWORD.startswith("ChangeMe-placeholder") or KOTIENO_PASSWORD.startswith("ChangeMe-placeholder"):

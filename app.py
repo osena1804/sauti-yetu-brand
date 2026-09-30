@@ -3,10 +3,13 @@ import os
 import streamlit as st
 
 import db
+import admins
 import ingestion
 import transcription
 import resolution_notifier
 import fraud_audit
+
+admins.seed_admin_accounts()
 
 st.set_page_config(page_title="Sauti-Yetu", page_icon="📡", layout="wide")
 
