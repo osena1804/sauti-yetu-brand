@@ -1,7 +1,8 @@
 import sqlite3
 
 import crypto_utils
-import seed_data  # Import your seed script file
+import seed_data 
+import admins  # Auto-creates/syncs admin accounts if missing # Import your seed script file
 
 DB_PATH = "sauti_yetu.db"
 
