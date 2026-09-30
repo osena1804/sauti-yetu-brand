@@ -2,7 +2,6 @@ import sqlite3
 
 import crypto_utils
 import seed_data 
-import admins  # Auto-creates/syncs admin accounts if missing # Import your seed script file
 
 DB_PATH = "sauti_yetu.db"
 
@@ -25,9 +24,14 @@ def init_and_autoseed_db(db_path="sauti_yetu.db"):
     if count == 0:
         print("Empty database detected. Auto-seeding initial enterprise telemetry...")
         seed_data.seed_database(db_path)
+        
+    # 4. Safely seed/sync admin accounts after database functions are fully declared
+    import admins
+
 
 # Call this on app startup
 init_and_autoseed_db()
+
 
 def get_connection(db_path=DB_PATH):
     """Returns a connection where rows behave like dicts (row["brand_name"])."""
