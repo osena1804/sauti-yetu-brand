@@ -359,17 +359,32 @@ if tab_data is not None:
 if tab_resolve is not None:
     with tab_resolve:
         st.header("✅ Resolution & Dispute Tracker")
-        st.caption(
-            "Scoped to one alert for this walkthrough: Unilever - cooking oil seal contamination. "
-            "The full platform would offer this for every active alert."
-        )
+        st.caption("Pick an active alert to review, resolve, or dispute.")
 
-        DEMO_BRAND, DEMO_CLUSTER = "Unilever", "oil_seal_leakage"
-        alert_id = db.find_alert(DEMO_BRAND, DEMO_CLUSTER)
+        # Same alerts the Alert Board shows (respects the sidebar brand filter)
+        active_alerts = db.get_active_alerts(selected_brand_id)
 
-        if not alert_id:
-            st.error(f"Demo alert not found for {DEMO_BRAND} / {DEMO_CLUSTER}. Run python seed_data.py to reset.")
+        if not active_alerts:
+            st.success("No active alerts to resolve for this selection.")
         else:
+            # Critical (red) first, then pattern (amber)
+            type_order = {"URGENCY_SPIKE": 0, "PATTERN_TREND": 1}
+            active_alerts = sorted(active_alerts, key=lambda a: type_order.get(a["alert_type"], 2))
+            alert_lookup = {a["alert_id"]: a for a in active_alerts}
+
+            def format_alert(aid):
+                a = alert_lookup[aid]
+                icon = ALERT_COLORS.get(a["alert_type"], "⚪")
+                label = ALERT_LABELS.get(a["alert_type"], a["alert_type"])
+                return f"{icon} {label} · {a['brand_name']} · {a['cluster_id']} ({a['trigger_count']} reports)"
+
+            alert_id = st.selectbox(
+                "Select an alert to resolve",
+                options=list(alert_lookup.keys()),
+                format_func=format_alert,
+                key="resolve_alert_select",
+            )
+
             db.finalize_if_expired(alert_id)
             resolution_notifier.notify_resolution_if_needed(alert_id)
             alert = db.get_alert(alert_id)
@@ -391,11 +406,11 @@ if tab_resolve is not None:
                     st.warning("🔒 Log in as an admin (sidebar) to submit a resolution.")
                 else:
                     st.caption(f"Submitting as **{resolve_admin['real_name']}** — this becomes the encrypted admin signature.")
-                    with st.form("resolve_form"):
-                        proof = st.text_area("Proof of resolution",
-                                              placeholder="e.g. Batch BD-441 recalled, replacement stock issued")
-                        statement = st.text_area("Official statement",
-                                                  placeholder="e.g. We have identified and recalled the affected batch.")
+                    with st.form(f"resolve_form_{alert_id}"):
+                        proof = st.text_area("Proof of resolution", key=f"proof_{alert_id}",
+                                             placeholder="e.g. Batch BD-441 recalled, replacement stock issued")
+                        statement = st.text_area("Official statement", key=f"statement_{alert_id}",
+                                                 placeholder="e.g. We have identified and recalled the affected batch.")
                         submit_res = st.form_submit_button("📤 Submit resolution proof", type="primary")
                     if submit_res:
                         if not proof.strip() or not statement.strip():
@@ -421,10 +436,10 @@ if tab_resolve is not None:
                 )
 
                 b1, b2 = st.columns(2)
-                if b1.button("👎 Simulate: user reports 'Still experiencing issue'"):
+                if b1.button("👎 Simulate: user reports 'Still experiencing issue'", key=f"dispute_{alert_id}"):
                     db.add_dispute(alert_id)
                     st.rerun()
-                if b2.button("⏩ Simulate: 72 hours pass"):
+                if b2.button("⏩ Simulate: 72 hours pass", key=f"window_{alert_id}"):
                     db.simulate_verification_window_passed(alert_id)
                     st.rerun()
 
@@ -438,7 +453,7 @@ if tab_resolve is not None:
                 st.caption(f"The Days Unaddressed counter keeps counting from {alert['days_unaddressed']:.2f} "
                            f"days - it does not reset on escalation.")
                 render_admin_audit_expander(alert)
-                if st.button("🔁 Allow brand to attempt resolution again"):
+                if st.button("🔁 Allow brand to attempt resolution again", key=f"reopen_{alert_id}"):
                     db.reopen_alert(alert_id)
                     st.rerun()
 
