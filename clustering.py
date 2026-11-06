@@ -111,6 +111,43 @@ CLUSTER_RULES = {
             ],
         },
     },
+    "L'Oreal": {
+        # RED-alert cluster: bad skin or scalp reactions after using a product
+        "skin_reaction": {
+            "symptoms": [
+                r"\brash(es)?\b|vipele",
+                r"\bitch(y|ing)?\b|kuwasha|nawashwa",
+                r"swell|swollen|vimba",
+                r"\bburn(s|ed|t|ing)?\b|ungua|unguza",
+                r"blister|malengelenge",
+                r"\bhives\b|irritat|allerg|mzio",
+                r"peeling|peeled|chubuka",
+                r"reaction|reacted",
+            ],
+            "context": [
+                r"skin|ngozi|face|\buso",
+                r"scalp|hair|nywele",
+                r"cream|lotion|serum|shampoo|conditioner|relaxer|\bdye\b|sunscreen|moisturi[sz]er|foundation|makeup|mascara|lipstick|perfume|deodorant",
+                r"l['\u2019]?or[e\u00e9]al|garnier|maybelline|vichy|la roche|cerave",
+            ],
+        },
+        # AMBER-alert cluster: white or ashy film on deep skin tones
+        "white_cast_deep_skin": {
+            "symptoms": [
+                r"white (cast|film|residue|layer|patch(es)?)|whitish",
+                r"\bashy\b|chalky",
+                r"gr[ae]y(ish)? (cast|look|tinge)|kijivu",
+                r"nyeupe|weupe",
+            ],
+            "context": [
+                r"sunscreen|sunblock|\bspf\b",
+                r"cream|lotion|moisturi[sz]er|foundation|powder|serum|primer|makeup",
+                r"skin|ngozi|face|\buso",
+                r"dark|deep|black|nyeusi|\btone",
+                r"l['\u2019]?or[e\u00e9]al|garnier|maybelline|vichy|la roche|cerave",
+            ],
+        },
+    },
 }
 
 # Compile once at import time
@@ -152,7 +189,10 @@ def _self_test():
         ("Safaricom", "app_freeze_step2", 15),
         ("Unilever", "oil_seal_leakage", 2),
         ("Equity Bank", "atm_card_retention", 1),
+        ("L'Oreal", "white_cast_deep_skin", 15),
+        ("L'Oreal", "skin_reaction", 3),
     ]
+    
     for brand, cluster, expected in checks:
         brand_id = db.get_brand_id(brand)
         rows = db.get_complaints_for_cluster(brand_id, cluster)
@@ -191,6 +231,32 @@ def _self_test():
         result = classify(brand, text)
         assert result == expected_cluster, f"{brand}/{text!r} -> {result}, expected {expected_cluster}"
     print(f"  OK  {len(samples)} new-brand sample texts classified correctly (Brookside Dairy, KCB Group, Naivas)")
+    # 4. L'Oreal: no seed data yet, so test classify() directly on sample texts.
+    loreal_samples = [
+        ("skin_reaction", "Nilitumia L'Oreal cream usoni na ngozi yangu imevimba na kuwasha sana"),
+        ("skin_reaction", "Garnier hair dye gave me a rash and my scalp is burning and swollen"),
+        ("skin_reaction", "After using the L'Oreal relaxer my scalp got blisters, I went to hospital"),
+        ("skin_reaction", "L'Or\u00e9al cream gave me an itchy rash on my face"),
+        ("white_cast_deep_skin", "The L'Oreal sunscreen leaves a white cast on my dark skin, I look ashy"),
+        ("white_cast_deep_skin", "Sunscreen ya L'Oreal inaacha rangi nyeupe usoni, ngozi nyeusi inaonekana ya kijivu"),
+        ("white_cast_deep_skin", "This foundation looks chalky and grey on deep skin tones"),
+    ]
+    for expected_cluster, text in loreal_samples:
+        result = classify("L'Oreal", text)
+        assert result == expected_cluster, f"L'Oreal / {text!r} -> {result}, expected {expected_cluster}"
+    print(f"  OK  {len(loreal_samples)} L'Oreal sample texts classified correctly")
+
+    loreal_negatives = [
+        ("L'Oreal", "I love this cream, my skin feels amazing"),
+        ("L'Oreal", "The Garnier app keeps crashing at checkout"),
+        ("L'Oreal", "Delivery was late and the courier was rude"),
+        ("Naivas", "My skin got a rash from the L'Oreal cream"),
+        ("Unilever", "My skin got a rash after using the cream"),
+    ]
+    for brand, text in loreal_negatives:
+        result = classify(brand, text)
+        assert result == UNCLASSIFIED, f"False positive: {brand!r} / {text!r} -> {result}"
+    print(f"  OK  {len(loreal_negatives)} L'Oreal-related negative cases stayed unclassified")
 
     print("Clustering tests: all passed.")
 

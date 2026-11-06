@@ -1,3 +1,6 @@
+import os
+
+os.environ["SAUTI_OFFLINE"] = "1"   # no AI calls: keeps this test free, fast and repeatable
 import alerts
 import db
 import ingestion
@@ -25,7 +28,11 @@ def main():
     safaricom = db.get_brand_id("Safaricom")
     unilever = db.get_brand_id("Unilever")
 
-    assert len(db.get_active_alerts()) == 4, "Run python seed_data.py first (expected exactly 2 alerts)."
+    assert len(db.get_active_alerts()) == 5, "Run python seed_data.py first (expected exactly 5 alerts)."
+
+    # Never send real texts from a test: the red Equity alert below would otherwise
+    # SMS any auditor who has a phone on file.
+    ingestion.sms_gateway.send_sms = lambda to, message: (True, "stub")
 
     # 1. Idempotency: seeded clusters already have their alerts, so nothing new fires
     assert alerts.check_alerts(safaricom, "app_freeze_step2") == []
@@ -67,7 +74,7 @@ def main():
     print("OK  5. 16th report -> no duplicate alert")
 
     active = db.get_active_alerts()
-    assert len(active) == 6, len(active)
+    assert len(active) == 7, len(active)
     print("\nActive alerts now:")
     for a in active:
         print(f"  - {a['brand_name']}: {a['alert_type']} on {a['cluster_id']} ({a['trigger_count']})")

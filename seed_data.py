@@ -107,6 +107,7 @@ def seed_database(db_path="sauti_yetu.db"):
     brookside_id = get_brand_id(cursor, "Brookside Dairy")
     kcb_id = get_brand_id(cursor, "KCB Group")
     naivas_id = get_brand_id(cursor, "Naivas")
+    loreal_id = get_brand_id(cursor, "L'Oreal")
 
     # 3. Pattern Trigger cluster — Safaricom "app_freeze_step2"
     # 15 distinct reports across 6 valid Kenyan counties (Nairobi, Kiambu, Mombasa, Nakuru, Kisumu, Uasin Gishu)
@@ -307,6 +308,70 @@ def seed_database(db_path="sauti_yetu.db"):
             """,
             (naivas_id, county, text, f"mock_hash_naivas_{i:03d}"),
         )
+    # 9. L'Oreal demo scenario (all simulated)
+    # (a) AMBER pattern alert: white cast on deep skin tones, 15 reports, 6 counties.
+    loreal_cast = [
+        ("Nairobi", "L'Oreal sunscreen leaves a white cast on my face, I look ashy by noon"),
+        ("Mombasa", "Sunscreen ya L'Oreal inaacha rangi nyeupe usoni, ngozi nyeusi inaonekana kijivu"),
+        ("Kisumu", "The L'Oreal moisturiser with SPF looks chalky on deep skin tones"),
+        ("Nakuru", "Foundation inaacha white film kwenye ngozi yangu nyeusi, haiblendi vizuri"),
+        ("Nairobi", "Why does this sunscreen leave a whitish layer on dark skin? I look grey"),
+        ("Kiambu", "Sunblock hii ni nyeupe sana kwenye ngozi nyeusi, naonekana kama nimepaka unga"),
+        ("Uasin Gishu", "This face cream gives me an ashy white cast, it was not made for dark skin"),
+        ("Mombasa", "Sunscreen hii ni chalky kwa ngozi nyeusi, naonekana nimepakwa chaki"),
+        ("Nairobi", "The white residue from this SPF cream does not rub in on my skin"),
+        ("Kisumu", "Sunscreen yenu inaacha rangi ya kijivu usoni, sijui kama imetengenezwa kwa ngozi nyeusi"),
+        ("Nakuru", "Foundation shade looks ashy and chalky on my dark skin after an hour"),
+        ("Nairobi", "I stopped using the sunscreen, the white cast is embarrassing on deep skin"),
+        ("Kiambu", "Lotion hii ya SPF inaacha weupe usoni, haiendi hata nikisugua"),
+        ("Mombasa", "Sunscreen white cast on dark skin, please make a version for us"),
+        ("Uasin Gishu", "The foundation looks grey and chalky on my face, not made for deep skin"),
+    ]
+    for i, (county, text) in enumerate(loreal_cast, start=1):
+        cursor.execute(
+            """
+            INSERT INTO complaints
+            (brand_id, county, issue_cluster, raw_text_scrubbed, image_url, phone_hash,
+             severity_score, confidence_score, urgency_level, status)
+            VALUES (?, ?, 'white_cast_deep_skin', ?, NULL, ?, 0.40, 0.88, 'MEDIUM', 'UNADDRESSED')
+            """,
+            (loreal_id, county, text, f"mock_hash_loreal_cast_{i:03d}"),
+        )
+
+    counties_covered = len({county for county, _ in loreal_cast})
+    cursor.execute(
+        """
+        INSERT INTO critical_alerts
+        (brand_id, cluster_id, alert_type, trigger_count, has_photo_evidence, action_brief_text)
+        VALUES (?, 'white_cast_deep_skin', 'PATTERN_TREND', ?, 0, ?)
+        """,
+        (
+            loreal_id,
+            len(loreal_cast),
+            f"{len(loreal_cast)} independent reports across {counties_covered} counties describe a white "
+            "or ashy cast left by sunscreen and face products on deep skin tones. No single report is "
+            "a safety issue, but the volume and geographic spread suggest a shade-range or formulation "
+            "issue worth R&I review. The reports do not establish a cause.",
+        ),
+    )
+
+    # (b) RED alert waiting to fire: one severe report is already in, so ONE more severe
+    # live submission makes 2 independent reporters and fires the alert on stage.
+    loreal_skin = [
+        ("Nairobi", "My skin swelled up and blistered after using a new face serum, I had to go to the pharmacy", 0.90, 0.92, "CRITICAL"),
+        ("Kisumu", "New lotion made my skin itchy and red for two days, I stopped using it", 0.65, 0.85, "HIGH"),
+        ("Mombasa", "Nimepata vipele usoni baada ya kutumia cream mpya", 0.65, 0.80, "HIGH"),
+    ]
+    for i, (county, text, sev, conf, level) in enumerate(loreal_skin, start=1):
+        cursor.execute(
+            """
+            INSERT INTO complaints
+            (brand_id, county, issue_cluster, raw_text_scrubbed, image_url, phone_hash,
+             severity_score, confidence_score, urgency_level, status)
+            VALUES (?, ?, 'skin_reaction', ?, NULL, ?, ?, ?, ?, 'UNADDRESSED')
+            """,
+            (loreal_id, county, text, f"mock_hash_loreal_skin_{i:03d}", sev, conf, level),
+        )        
 
     conn.commit()
 
@@ -318,7 +383,7 @@ def seed_database(db_path="sauti_yetu.db"):
 
     conn.close()
     print("Sauti-Yetu database successfully seeded!")
-    print(f"Sanity Check: {complaint_count} complaints (Expected: 39) | {alert_count} alerts (Expected: 4)")
+    print(f"Sanity Check: {complaint_count} complaints (Expected: 57) | {alert_count} alerts (Expected: 5)")
 
 
 if __name__ == "__main__":
