@@ -49,6 +49,48 @@ def render_photo_authenticity_check(row, key_suffix):
         db.log_audit_action(admin, "PHOTO_AUTH_CHECK", detail=f"complaint #{row['incident_id']}")
         st.rerun()
 
+def render_public_verification(alert_id):
+    """Public panel: shows the brand's resolution claim and lets consumers confirm or dispute it."""
+    db.finalize_if_expired(alert_id)
+    full = db.get_alert(alert_id)
+    if full["resolution_status"] == "DISPUTED":
+        st.error("🔺 The brand's fix was disputed by affected consumers. This issue is open again.")
+        return
+    if full["resolution_status"] != "PENDING_VERIFICATION":
+        return
+
+    st.warning("🕓 **Brand says this is resolved. Community verification open (72 hours).**")
+    st.write(f"**Official statement:** {full['official_statement']}")
+    st.caption(f"Proof submitted by {full['admin_public_id']}")
+
+    threshold = max(1, round(0.20 * full["trigger_count"]))
+    st.progress(
+        min(1.0, full["dispute_count"] / threshold),
+        text=f"{full['dispute_count']} of {threshold} disputes needed to reopen this alert",
+    )
+    st.caption(f"👍 {full.get('confirm_count') or 0} confirmed fixed · 👎 {full['dispute_count']} still affected")
+    voted_key = f"voted_{alert_id}"
+    if st.session_state.get(voted_key):
+        st.success("✅ Thanks, your response was recorded.")
+        return
+
+    choice = st.selectbox(
+        "Has this been fixed for you?",
+        ["Select an option...", "👎 Still experiencing the issue", "👍 All good now"],
+        key=f"verify_choice_{alert_id}",
+    )
+    if st.button("Submit response", key=f"verify_submit_{alert_id}"):
+        if choice.startswith("👎"):
+            db.add_dispute(alert_id)
+            st.session_state[voted_key] = True
+            st.rerun()
+        elif choice.startswith("👍"):
+            db.add_confirmation(alert_id)
+            st.session_state[voted_key] = True
+            st.rerun()
+        else:
+            st.error("Please pick an option first.")        
+
 def render_alert_card(alert):
     icon = ALERT_COLORS.get(alert["alert_type"], "⚪")
     label = ALERT_LABELS.get(alert["alert_type"], alert["alert_type"])
@@ -60,6 +102,7 @@ def render_alert_card(alert):
             st.caption(f"**Cluster:** `{alert['cluster_id']}`")
 
         st.write(alert["action_brief_text"])
+        render_public_verification(alert["alert_id"])
         st.caption(f"📈 **Trigger Volume:** {alert['trigger_count']} independent report(s)")
 
         with st.expander("View underlying reports"):

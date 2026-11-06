@@ -56,6 +56,7 @@ def _migrate_resolution_columns():
             "verification_expires_at": "ALTER TABLE critical_alerts ADD COLUMN verification_expires_at TIMESTAMP",
             "dispute_count": "ALTER TABLE critical_alerts ADD COLUMN dispute_count INTEGER DEFAULT 0",
             "resolution_sms_sent": "ALTER TABLE critical_alerts ADD COLUMN resolution_sms_sent INTEGER DEFAULT 0",
+            "confirm_count": "ALTER TABLE critical_alerts ADD COLUMN confirm_count INTEGER DEFAULT 0",
         }
 
         for column, ddl in migrations.items():
@@ -414,6 +415,14 @@ def add_dispute(alert_id):
         )
         conn.commit()
 
+def add_confirmation(alert_id):
+    """A reporter tapping 'All good now' on a pending resolution."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE critical_alerts SET confirm_count = COALESCE(confirm_count, 0) + 1 WHERE alert_id = ?",
+            (alert_id,),
+        )
+        conn.commit()
 
 def finalize_if_expired(alert_id, dispute_threshold_ratio=0.20):
     """If the verification window has passed, resolves it: RESOLVED if disputes stayed
@@ -434,8 +443,8 @@ def finalize_if_expired(alert_id, dispute_threshold_ratio=0.20):
     if not expired:
         return "PENDING_VERIFICATION"
 
-    ratio = alert["dispute_count"] / max(1, alert["trigger_count"])
-    new_status = "DISPUTED" if ratio > dispute_threshold_ratio else "RESOLVED"
+    threshold = max(1, round(dispute_threshold_ratio * alert["trigger_count"]))
+    new_status = "DISPUTED" if alert["dispute_count"] >= threshold else "RESOLVED"
     with get_connection() as conn:
         if new_status == "RESOLVED":
             conn.execute(
@@ -591,7 +600,7 @@ def set_photo_authenticity(incident_id, authenticity_score, is_flagged_synthetic
                 (authenticity_score, incident_id),
             )
         else:
-                        conn.execute(
+            conn.execute(
                 """
                 UPDATE complaints
                 SET authenticity_score = ?, is_flagged_synthetic = 0, authenticity_checked = 1
