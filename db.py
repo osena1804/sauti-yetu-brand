@@ -1,7 +1,9 @@
+import os
 import sqlite3
 
 import crypto_utils
 import seed_data 
+
 
 DB_PATH = "sauti_yetu.db"
 
@@ -21,7 +23,7 @@ def init_and_autoseed_db(db_path="sauti_yetu.db"):
     conn.close()
     
     # 3. If empty, run seed_database
-    if count == 0:
+    if count == 0 and os.environ.get("SAUTI_DEMO", "1") != "0":
         print("Empty database detected. Auto-seeding initial enterprise telemetry...")
         seed_data.seed_database(db_path)
 
@@ -117,6 +119,10 @@ def _migrate_complaint_columns():
             "is_flagged_synthetic": "ALTER TABLE complaints ADD COLUMN is_flagged_synthetic INTEGER DEFAULT 0",
             "low_confidence_flag": "ALTER TABLE complaints ADD COLUMN low_confidence_flag INTEGER DEFAULT 0",
             "authenticity_checked": "ALTER TABLE complaints ADD COLUMN authenticity_checked INTEGER DEFAULT 0",
+            "consent_version": "ALTER TABLE complaints ADD COLUMN consent_version TEXT",
+            "consent_at": "ALTER TABLE complaints ADD COLUMN consent_at TIMESTAMP",
+            "consent_sms": "ALTER TABLE complaints ADD COLUMN consent_sms INTEGER DEFAULT 0",
+            "consent_language": "ALTER TABLE complaints ADD COLUMN consent_language TEXT",
         }
         for column, ddl in migrations.items():
             if column not in existing:
@@ -132,11 +138,66 @@ def _migrate_admin_columns():
             conn.execute("ALTER TABLE admins ADD COLUMN phone VARCHAR(20)")
         conn.commit()
 
+def _migrate_brand_columns():
+    """Adds is_active and rule_pack to brands if missing. Existing brands become
+    active and use the 'beauty' rule pack. Safe to run on every import."""
+    with get_connection() as conn:
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='brands'"
+        ).fetchone()
+        if not table:
+            return
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(brands)")}
+        if "is_active" not in existing:
+            conn.execute("ALTER TABLE brands ADD COLUMN is_active INTEGER DEFAULT 1")
+        if "rule_pack" not in existing:
+            conn.execute("ALTER TABLE brands ADD COLUMN rule_pack TEXT DEFAULT 'beauty'")
+        conn.commit()
+
+def _ensure_counterfeit_table():
+    """Creates counterfeit_reports if missing and adds the review columns.
+    Safe to run on every import: CREATE IF NOT EXISTS plus a column check."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS counterfeit_reports (
+                report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                brand_id INTEGER NOT NULL,
+                county TEXT NOT NULL,
+                outlet_type TEXT NOT NULL,
+                outlet_name TEXT,
+                reason_text TEXT NOT NULL,
+                front_photo TEXT NOT NULL,
+                back_photo TEXT NOT NULL,
+                outlet_photo TEXT NOT NULL,
+                phone_hash TEXT,
+                phone_encrypted TEXT,
+                review_status VARCHAR(30) DEFAULT 'New',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(counterfeit_reports)")}
+        migrations = {
+            "reviewer_note": "ALTER TABLE counterfeit_reports ADD COLUMN reviewer_note TEXT",
+            "reviewed_by": "ALTER TABLE counterfeit_reports ADD COLUMN reviewed_by TEXT",
+            "reviewed_at": "ALTER TABLE counterfeit_reports ADD COLUMN reviewed_at TIMESTAMP",
+            "legal_hold": "ALTER TABLE counterfeit_reports ADD COLUMN legal_hold INTEGER DEFAULT 0",
+            "consent_version": "ALTER TABLE counterfeit_reports ADD COLUMN consent_version TEXT",
+            "consent_at": "ALTER TABLE counterfeit_reports ADD COLUMN consent_at TIMESTAMP",
+            "consent_sms": "ALTER TABLE counterfeit_reports ADD COLUMN consent_sms INTEGER DEFAULT 0",
+            "consent_language": "ALTER TABLE counterfeit_reports ADD COLUMN consent_language TEXT",
+        }
+        for column, ddl in migrations.items():
+            if column not in existing:
+                conn.execute(ddl)
+        conn.commit()
 
 _migrate_resolution_columns()
 _migrate_complaint_columns()
 _ensure_auth_tables()
 _migrate_admin_columns()
+_migrate_brand_columns()
 
 
 # ---------- Brands ----------
@@ -158,13 +219,80 @@ def get_brand_name(brand_id):
     return row["brand_name"] if row else None
 
 
-def list_brands():
+def list_brands(include_inactive=False):
+    """Brands consumers can choose from. Pass include_inactive=True for the admin screen."""
+    query = "SELECT brand_id, brand_name, category, rule_pack, is_active FROM brands"
+    if not include_inactive:
+        query += " WHERE is_active = 1"
+    query += " ORDER BY brand_name"
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT brand_id, brand_name, category FROM brands ORDER BY brand_name"
-        ).fetchall()
+        rows = conn.execute(query).fetchall()
     return [dict(r) for r in rows]
 
+
+def get_brand_rule_pack(brand_name):
+    """The clustering rule pack for a brand, or None if the brand doesn't exist."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT rule_pack FROM brands WHERE brand_name = ?", (brand_name,)
+        ).fetchone()
+    return row["rule_pack"] if row else None
+
+
+def brand_is_active(brand_id):
+    """True if consumers may submit reports for this brand."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT is_active FROM brands WHERE brand_id = ?", (brand_id,)
+        ).fetchone()
+    return bool(row and row["is_active"])
+
+
+def _clean_brand_name(name):
+    cleaned = " ".join((name or "").split())  # trims and collapses spaces
+    if not 2 <= len(cleaned) <= 60:
+        raise ValueError("Brand name must be between 2 and 60 characters.")
+    if any(ord(ch) < 32 for ch in cleaned):
+        raise ValueError("Brand name contains invalid characters.")
+    return cleaned
+
+
+def add_brand(brand_name, category, rule_pack):
+    """Adds a brand. Names are unique ignoring upper/lower case. Raises ValueError
+    with a plain message if the name is invalid or already used."""
+    name = _clean_brand_name(brand_name)
+    category = " ".join((category or "").split()) or "Uncategorised"
+    with get_connection() as conn:
+        clash = conn.execute(
+            "SELECT 1 FROM brands WHERE lower(brand_name) = lower(?)", (name,)
+        ).fetchone()
+        if clash:
+            raise ValueError(f"A brand called {name!r} already exists.")
+        cur = conn.execute(
+            "INSERT INTO brands (brand_name, category, alert_phone_encrypted, rule_pack, is_active) "
+            "VALUES (?, ?, 'not_set', ?, 1)",
+            (name, category, rule_pack),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def update_brand(brand_id, brand_name, category, rule_pack, is_active):
+    """Edits a brand. Switch brands off (is_active False) instead of deleting them,
+    because existing reports and alerts point to the brand."""
+    name = _clean_brand_name(brand_name)
+    category = " ".join((category or "").split()) or "Uncategorised"
+    with get_connection() as conn:
+        clash = conn.execute(
+            "SELECT 1 FROM brands WHERE lower(brand_name) = lower(?) AND brand_id != ?", (name, brand_id)
+        ).fetchone()
+        if clash:
+            raise ValueError(f"A brand called {name!r} already exists.")
+        conn.execute(
+            "UPDATE brands SET brand_name = ?, category = ?, rule_pack = ?, is_active = ? WHERE brand_id = ?",
+            (name, category, rule_pack, 1 if is_active else 0, brand_id),
+        )
+        conn.commit()
 
 # ---------- Complaints ----------
 
@@ -173,8 +301,10 @@ def insert_complaint(brand_id, county, issue_cluster, raw_text_scrubbed,
                      urgency_level="MEDIUM", image_url=None, phone_encrypted=None,
                      authenticity_score=1.0, is_flagged_synthetic=False,
                      low_confidence_flag=False, is_quarantined=False, status="Open",
-                     authenticity_checked=False):
-    """Inserts one complaint and returns its new incident_id."""
+                     authenticity_checked=False,
+                     consent_version=None, consent_sms=False, consent_language=None):
+    """Inserts one complaint and returns its new incident_id. The consent record
+    (wording version, time, SMS choice, language) is stored with the report."""
     with get_connection() as conn:
         cur = conn.execute(
             """
@@ -182,14 +312,16 @@ def insert_complaint(brand_id, county, issue_cluster, raw_text_scrubbed,
             (brand_id, county, issue_cluster, raw_text_scrubbed, image_url,
              phone_hash, severity_score, confidence_score, urgency_level, phone_encrypted,
              authenticity_score, is_flagged_synthetic, low_confidence_flag, is_quarantined, status,
-             authenticity_checked)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             authenticity_checked, consent_version, consent_at, consent_sms, consent_language)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, ?, ?)
             """,
             (brand_id, county, issue_cluster, raw_text_scrubbed, image_url,
              phone_hash, severity_score, confidence_score, urgency_level, phone_encrypted,
              authenticity_score, 1 if is_flagged_synthetic else 0,
              1 if low_confidence_flag else 0, 1 if is_quarantined else 0, status,
-             1 if authenticity_checked else 0),
+             1 if authenticity_checked else 0,
+             consent_version, consent_version, 1 if consent_sms else 0, consent_language),
         )
         return cur.lastrowid
 
@@ -529,9 +661,10 @@ def get_audit_log_for_alert(alert_id):
 
 def get_first_n_reporters_for_cluster(brand_id, issue_cluster, n=10):
     """Decrypts and returns up to n phone numbers, one per distinct reporter,
-    ordered by who reported FIRST in this cluster - not most recent. Decryption
-    happens here and only here; the result is meant to be used immediately to
-    send SMS and then discarded, never stored or displayed."""
+    ordered by who reported FIRST in this cluster - not most recent. ONLY reporters
+    who ticked the SMS consent box are included. Decryption happens here and only
+    here; the result is meant to be used immediately to send SMS and then discarded,
+    never stored or displayed."""
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -541,10 +674,10 @@ def get_first_n_reporters_for_cluster(brand_id, issue_cluster, n=10):
                 SELECT phone_hash, MIN(created_at) AS first_seen
                 FROM complaints
                 WHERE brand_id = ? AND issue_cluster = ? AND is_quarantined = 0
-                  AND phone_encrypted IS NOT NULL
+                  AND phone_encrypted IS NOT NULL AND consent_sms = 1
                 GROUP BY phone_hash
             ) first ON first.phone_hash = c.phone_hash AND first.first_seen = c.created_at
-            WHERE c.brand_id = ? AND c.issue_cluster = ?
+            WHERE c.brand_id = ? AND c.issue_cluster = ? AND c.consent_sms = 1
             ORDER BY first.first_seen ASC
             LIMIT ?
             """,
@@ -557,6 +690,7 @@ def get_first_n_reporters_for_cluster(brand_id, issue_cluster, n=10):
         except Exception:
             continue  # skip any row that fails to decrypt rather than crash the batch
     return phones
+
 
 
 def mark_resolution_sms_sent(alert_id):
@@ -644,6 +778,88 @@ def update_complaint_status(incident_id, new_status, is_quarantined=None):
             )
         conn.commit()
 
+def insert_counterfeit_report(brand_id, county, outlet_type, outlet_name, reason_text,
+                              front_photo, back_photo, outlet_photo,
+                              phone_hash=None, phone_encrypted=None,
+                              consent_version=None, consent_sms=False, consent_language=None):
+    """Stores one counterfeit report and returns its report_id. The phone hash and
+    encrypted phone are computed in ingestion.py (keyed hash), never here."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO counterfeit_reports
+            (brand_id, county, outlet_type, outlet_name, reason_text,
+             front_photo, back_photo, outlet_photo, phone_hash, phone_encrypted,
+             consent_version, consent_at, consent_sms, consent_language)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, ?, ?)
+            """,
+            (brand_id, county, outlet_type, outlet_name, reason_text,
+             front_photo, back_photo, outlet_photo, phone_hash, phone_encrypted,
+             consent_version, consent_version, 1 if consent_sms else 0, consent_language),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_counterfeit_reports(brand_id=None, review_status=None):
+    """Counterfeit reports joined with brand name, newest first. For the
+    restricted review tab only. The encrypted phone is never returned."""
+    query = """
+        SELECT r.report_id, r.brand_id, b.brand_name, r.county, r.outlet_type,
+               r.outlet_name, r.reason_text, r.front_photo, r.back_photo,
+               r.outlet_photo, r.phone_hash, r.review_status, r.reviewer_note,
+               r.reviewed_by, r.reviewed_at, r.legal_hold, r.created_at
+        FROM counterfeit_reports r
+        JOIN brands b ON b.brand_id = r.brand_id
+        WHERE 1 = 1
+    """
+    params = []
+    if brand_id is not None:
+        query += " AND r.brand_id = ?"
+        params.append(brand_id)
+    if review_status:
+        query += " AND r.review_status = ?"
+        params.append(review_status)
+    query += " ORDER BY r.created_at DESC, r.report_id DESC"
+    with get_connection() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_counterfeit_review(report_id, review_status, reviewer_note, reviewed_by, legal_hold=False):
+    """Records a reviewer's outcome. legal_hold = True stops the report from being
+    deleted by the retention job while an investigation is open."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE counterfeit_reports
+            SET review_status = ?, reviewer_note = ?, reviewed_by = ?,
+                reviewed_at = CURRENT_TIMESTAMP, legal_hold = ?
+            WHERE report_id = ?
+            """,
+            (review_status, reviewer_note, reviewed_by, 1 if legal_hold else 0, report_id),
+        )
+        conn.commit()
+
+
+def get_counterfeit_hotspots(brand_id=None):
+    """Aggregated counts only: reports by county and outlet type, leaving out any
+    judged 'Likely genuine'. No photos, no text, no outlet names."""
+    query = """
+        SELECT county AS County, outlet_type AS "Outlet type", COUNT(*) AS Reports
+        FROM counterfeit_reports
+        WHERE review_status != 'Likely genuine'
+    """
+    params = []
+    if brand_id is not None:
+        query += " AND brand_id = ?"
+        params.append(brand_id)
+    query += " GROUP BY county, outlet_type ORDER BY Reports DESC, county"
+    with get_connection() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [dict(r) for r in rows]        
+
 # ---------- Read-only self-test ----------
 
 if __name__ == "__main__":
@@ -668,3 +884,5 @@ if __name__ == "__main__":
     oil_alert_id = find_alert("Unilever", "oil_seal_leakage")
     print("\nOil alert_id:", oil_alert_id)
     print("Oil alert details:", get_alert(oil_alert_id))
+# Run this on module load to ensure tables and columns exist
+_ensure_counterfeit_table()

@@ -34,7 +34,7 @@ Return two scores between 0.0 and 1.0.
 
 SEVERITY: how serious the reported incident would be if it is true.
 - 0.85-1.00: threat to health or safety (contamination, food poisoning, injury, toxic exposure, or a severe skin or scalp reaction to a cosmetic or hair product such as swelling, blistering or chemical-type burns), large-scale fraud or theft of money, or a total outage of an essential service.
-- 0.60-0.84: significant financial loss or service failure for the customer (wrong charges, money deducted with no service, retained card), or a mild-to-moderate skin reaction to a product (itching, rash, redness).
+- 0.60-0.84: significant financial loss or service failure for the customer (wrong charges, money deducted with no service, retained card), or a mild-to-moderate skin reaction to a product (itching, rash, redness), or noticeable hair breakage or hair loss after a hair product.
 - 0.30-0.59: functional problems or inconvenience (app bugs, slow service, damaged packaging without harm, or a product that underperforms, such as white cast on deep skin tones).
 - 0.00-0.29: minor annoyance, personal preference, praise, or not really a complaint.
 
@@ -164,7 +164,7 @@ _HIGH = re.compile(
     r"wrong charge|overcharg|reversal|retention|swallow|outage|no network|hakuna network|"
     r"blackout|unauthori[sz]ed", re.I)
 _MEDIUM = re.compile(
-    r"stuck|hang|hung|freez|froze|crash|slow|error|failed|failure|imekataa|damaged|"
+    r"stuck|hang|hung|freez|froze|crash|slow|error|failed|failure|imekataa|damaged|breakage|hair loss|falling out|kunyonyoka|kukatika|brittle"
     r"expired|leak|broken|delay|haifanyi|haiendi|glitch|bug", re.I)
 _HYPERBOLE = re.compile(r"literally|\blol\b|lmao|haha|jk\b|joking|kidding|worst .{0,20} ever|!!!|😂|🤣", re.I)
 _INJECTION = re.compile(
@@ -178,7 +178,8 @@ _SPECIFIC = re.compile(r"batch|hospital|branch|receipt|\bksh\b|\bkes\b|\b\d{3,}\
 _BEAUTY_CONTEXT = re.compile(
     r"\bskin\b|ngozi|\bfaces?\b|\buso|scalp|\bhair\b|nywele|cream|lotion|serum|shampoo|"
     r"conditioner|relaxer|\bdye\b|sunscreen|moisturi[sz]er|foundation|makeup|mascara|"
-    r"lipstick|perfume|deodorant|l['\u2019]?or[e\u00e9]al|garnier|maybelline", re.I)
+    r"lipstick|perfume|deodorant|l['\u2019]?or[e\u00e9]al|garnier|maybelline|cerave|mizani|versman|"
+    r"(nice|dark) ?(&|and) ?lovely", re.I)
 _SKIN_SEVERE = re.compile(
     r"blister|malengelenge|swollen|swelling|vimba|\bburn(s|ed|t|ing)?\b|ungua|unguza|"
     r"\bhives\b|allergic reaction|anaphyla|mzio|chemical burn", re.I)

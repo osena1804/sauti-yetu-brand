@@ -7,173 +7,126 @@ UNCLASSIFIED = "unclassified"
 # Demo-tier clustering: a deterministic lookup, NOT semantic embeddings.
 # A complaint joins a cluster only if it matches at least one SYMPTOM pattern
 # (what went wrong) AND at least one CONTEXT pattern (what it's about).
-# Requiring both keeps "M-Pesa charged me a wrong fee" out of the freeze cluster.
 # Patterns are regexes, matched case-insensitively, so dialect variants
-# ("imestuck", "inahang", "inafreeze") are caught by their stems.
-CLUSTER_RULES = {
-    "Safaricom": {
-        "app_freeze_step2": {
-            "symptoms": [
-                r"stuck",
-                r"hang|hung",
-                r"freez|froze",
-                r"crash",
-                r"haiendi|haiwork|haifanyi kazi",
-                r"does nothing",
-            ],
-            "context": [
-                r"\bapp\b",
-                r"screen",
-                r"payment|malipo|kulipa|\bpay\b",
-                r"\bstep\b",
-                r"button",
-                r"m-?pesa",
-                r"confirm",
-            ],
-        },
+# are caught by their stems.
+#
+# RULE PACKS: each brand (set on the Brands screen) uses one rule pack, so a new
+# client's brands work as soon as they are keyed in, with no code change.
+# A new sector (food, banking, telecom ...) needs a new pack written and tested here.
+#
+# BRAND NAME HANDLING: the brand's own name is removed from the text before matching,
+# so a name like "Dark & Lovely" or "White Star" can never trigger a symptom or context
+# word by itself. A cluster marked brand_context=True counts a mention of the brand's
+# own name as one context hit.
+
+_BEAUTY_RULES = {
+    # RED-alert cluster: bad skin or scalp reactions after using a product
+    "skin_reaction": {
+        "brand_context": True,
+        "symptoms": [
+            r"\brash(es)?\b|vipele",
+            r"\bitch(y|ing)?\b|kuwasha|nawashwa",
+            r"swell|swollen|vimba",
+            r"\bburn(s|ed|t|ing)?\b|ungua|unguza",
+            r"blister|malengelenge",
+            r"\bhives\b|irritat|allerg|mzio",
+            r"peeling|peeled|chubuka",
+            r"reaction|reacted",
+        ],
+        "context": [
+            r"skin|ngozi|face|\buso",
+            r"scalp|hair|nywele",
+            r"cream|lotion|serum|shampoo|conditioner|relaxer|\bdye\b|sunscreen|moisturi[sz]er|foundation|makeup|mascara|lipstick|perfume|deodorant",
+        ],
     },
-    "Unilever": {
-        "oil_seal_leakage": {
-            "symptoms": [
-                r"seal.{0,30}(broken|open|torn)|(broken|open|torn).{0,30}seal",
-                r"contaminat",
-                r"leak",
-                r"smell|harufu",
-                r"tamper",
-            ],
-            "context": [
-                r"\boil\b|mafuta",
-                r"batch",
-                r"bottle|chupa",
-                r"packag|seal",
-            ],
-        },
+    # AMBER-alert cluster: white or ashy film on deep skin tones
+    "white_cast_deep_skin": {
+        "brand_context": False,
+        "symptoms": [
+            r"white (cast|film|residue|layer|patch(es)?)|whitish",
+            r"\bashy\b|chalky",
+            r"gr[ae]y(ish)? (cast|look|tinge)|kijivu",
+            r"nyeupe|weupe",
+        ],
+        "context": [
+            r"sunscreen|sunblock|\bspf\b",
+            r"cream|lotion|moisturi[sz]er|foundation|powder|serum|primer|makeup",
+            r"skin|ngozi|face|\buso",
+            r"dark|deep|black|nyeusi|\btone",
+        ],
     },
-    "Equity Bank": {
-        "atm_card_retention": {
-            "symptoms": [
-                r"retent|retain",
-                r"swallow|imemeza",
-                r"kept (my|the) card|ate my card",
-            ],
-            "context": [
-                r"\batm\b",
-                r"\bcard\b|kadi",
-            ],
-        },
-    },
-    "Brookside Dairy": {
-        "spoiled_milk": {
-            "symptoms": [
-                r"sour|sour(ed)?",
-                r"spoil|spoilt|spoiled",
-                r"curdl",
-                r"bad smell|harufu mbaya|inanuka",
-                r"expired|imeisha muda|expiry",
-                r"vomit|kutapika|kuhara|diarrh|tumbo inauma|stomach ache",
-            ],
-            "context": [
-                r"milk|maziwa",
-                r"packet|pouch|carton|bottle|chupa",
-                r"brookside",
-            ],
-        },
-    },
-    "KCB Group": {
-        "failed_transaction": {
-            "symptoms": [
-                r"declin",
-                r"failed|fail(ure)?",
-                r"reversal|haijarudi",
-                r"not received|haijafika|haijaingia",
-                r"double debit|charged twice|deducted twice|imekatwa mara mbili",
-            ],
-            "context": [
-                r"\bkcb\b",
-                r"transaction|malipo|transfer",
-                r"account|akaunti",
-                r"mobile banking|app",
-            ],
-        },
-    },
-    "Naivas": {
-        "stockout_and_pricing": {
-            "symptoms": [
-                r"out of stock|hakuna stock|imeisha stock|no stock",
-                r"wrong price|bei tofauti|overcharg|different price",
-                r"expired (product|item)|imeisha muda",
-                r"rude|huduma mbaya|poor service",
-            ],
-            "context": [
-                r"naivas",
-                r"shelf|till|checkout|receipt|risiti",
-                r"store|branch|duka",
-            ],
-        },
-    },
-    "L'Oreal": {
-        # RED-alert cluster: bad skin or scalp reactions after using a product
-        "skin_reaction": {
-            "symptoms": [
-                r"\brash(es)?\b|vipele",
-                r"\bitch(y|ing)?\b|kuwasha|nawashwa",
-                r"swell|swollen|vimba",
-                r"\bburn(s|ed|t|ing)?\b|ungua|unguza",
-                r"blister|malengelenge",
-                r"\bhives\b|irritat|allerg|mzio",
-                r"peeling|peeled|chubuka",
-                r"reaction|reacted",
-            ],
-            "context": [
-                r"skin|ngozi|face|\buso",
-                r"scalp|hair|nywele",
-                r"cream|lotion|serum|shampoo|conditioner|relaxer|\bdye\b|sunscreen|moisturi[sz]er|foundation|makeup|mascara|lipstick|perfume|deodorant",
-                r"l['\u2019]?or[e\u00e9]al|garnier|maybelline|vichy|la roche|cerave",
-            ],
-        },
-        # AMBER-alert cluster: white or ashy film on deep skin tones
-        "white_cast_deep_skin": {
-            "symptoms": [
-                r"white (cast|film|residue|layer|patch(es)?)|whitish",
-                r"\bashy\b|chalky",
-                r"gr[ae]y(ish)? (cast|look|tinge)|kijivu",
-                r"nyeupe|weupe",
-            ],
-            "context": [
-                r"sunscreen|sunblock|\bspf\b",
-                r"cream|lotion|moisturi[sz]er|foundation|powder|serum|primer|makeup",
-                r"skin|ngozi|face|\buso",
-                r"dark|deep|black|nyeusi|\btone",
-                r"l['\u2019]?or[e\u00e9]al|garnier|maybelline|vichy|la roche|cerave",
-            ],
-        },
+    # PATTERN cluster: hair breakage or hair loss after a hair product.
+    # Safety first: if a text mentions BOTH a burn and breakage, skin_reaction wins
+    # (it is listed first, and ties go to the first cluster).
+    "hair_damage": {
+        "brand_context": False,
+        "symptoms": [
+            r"breakage|breaking|break(s)? off|broke off|snapp(ed|ing)",
+            r"brittle",
+            r"hair ?loss|losing (my |her |his )?hair|falling out|fell out|thinning|\bbald",
+            r"katika|nyonyok|dondok",
+        ],
+        "context": [
+            r"hair|nywele",
+            r"relaxer|\bdye\b|shampoo|conditioner|hair ?treatment|\bperm\b|scalp",
+        ],
     },
 }
+
+RULE_PACKS = {
+    "beauty": _BEAUTY_RULES,
+    "none": {},   # brand is stored, but its reports are never clustered or alerted
+}
+RULE_PACK_INFO = {
+    "beauty": "Beauty and personal care: skin reaction, white cast on deep skin, hair damage",
+    "none": "No clustering: reports are stored but never raise alerts",
+}
+DEFAULT_PACK = "beauty"
 
 # Compile once at import time
 _COMPILED = {
-    brand: {
+    pack: {
         cluster: {
-            kind: [re.compile(p, re.IGNORECASE) for p in patterns]
-            for kind, patterns in rule.items()
+            "brand_context": bool(rule.get("brand_context")),
+            "symptoms": [re.compile(p, re.IGNORECASE) for p in rule["symptoms"]],
+            "context": [re.compile(p, re.IGNORECASE) for p in rule["context"]],
         }
         for cluster, rule in clusters.items()
     }
-    for brand, clusters in CLUSTER_RULES.items()
+    for pack, clusters in RULE_PACKS.items()
 }
 
 
-def classify(brand_name, text):
+def _brand_regex(brand_name):
+    """Regex matching the brand's own name in a complaint. 'Dark & Lovely' also matches
+    'Dark and Lovely'. Returns None if the name has no usable words."""
+    words = [w for w in re.findall(r"[A-Za-z0-9'\u2019]+", brand_name or "") if w.lower() != "and"]
+    if not words:
+        return None
+    return re.compile(r"\W+(?:(?:and|&)\W+)?".join(re.escape(w) for w in words), re.IGNORECASE)
+
+
+def classify(brand_name, text, rule_pack=None):
     """Returns the best-matching cluster_id for this brand, or 'unclassified'.
+    The rule pack comes from the brand's setting unless one is passed in.
     If several clusters qualify, the one with the most distinct pattern hits wins."""
-    clusters = _COMPILED.get(brand_name)
-    if not clusters or not text:
+    if not text:
         return UNCLASSIFIED
+    pack = rule_pack or db.get_brand_rule_pack(brand_name)
+    clusters = _COMPILED.get(pack)
+    if not clusters:
+        return UNCLASSIFIED
+
+    brand_re = _brand_regex(brand_name)
+    mentions_brand = bool(brand_re and brand_re.search(text))
+    masked = brand_re.sub(" brandname ", text) if brand_re else text
 
     best_cluster, best_score = UNCLASSIFIED, 0
     for cluster_id, rule in clusters.items():
-        symptom_hits = sum(1 for p in rule["symptoms"] if p.search(text))
-        context_hits = sum(1 for p in rule["context"] if p.search(text))
+        symptom_hits = sum(1 for p in rule["symptoms"] if p.search(masked))
+        context_hits = sum(1 for p in rule["context"] if p.search(masked))
+        if rule["brand_context"] and mentions_brand:
+            context_hits += 1
         if symptom_hits >= 1 and context_hits >= 1:
             score = symptom_hits + context_hits
             if score > best_score:
@@ -184,79 +137,81 @@ def classify(brand_name, text):
 # ---------- Self-test (read-only) ----------
 
 def _self_test():
+    # 0. Every brand in the database must have a known rule pack
+    brands = db.list_brands(include_inactive=True)
+    assert brands, "No brands in the database. Reseed or add brands first."
+    for b in brands:
+        assert b["rule_pack"] in RULE_PACKS, f"{b['brand_name']!r} has unknown rule pack {b['rule_pack']!r}"
+    print(f"  OK  {len(brands)} brands, all with a known rule pack")
+
     # 1. Every seeded complaint must land in the cluster it was seeded under
     checks = [
-        ("Safaricom", "app_freeze_step2", 15),
-        ("Unilever", "oil_seal_leakage", 2),
-        ("Equity Bank", "atm_card_retention", 1),
-        ("L'Oreal", "white_cast_deep_skin", 15),
-        ("L'Oreal", "skin_reaction", 3),
+        ("Garnier", "white_cast_deep_skin", 15),
+        ("Garnier", "skin_reaction", 3),
+        ("Dark & Lovely", "hair_damage", 4),
     ]
-    
     for brand, cluster, expected in checks:
         brand_id = db.get_brand_id(brand)
         rows = db.get_complaints_for_cluster(brand_id, cluster)
         assert len(rows) == expected, f"{brand}/{cluster}: found {len(rows)} rows, expected {expected}"
-        misses = [r["raw_text_scrubbed"] for r in rows if classify(brand, r["raw_text_scrubbed"]) != cluster]
+        misses = [r["raw_text_scrubbed"] for r in rows
+                  if classify(brand, r["raw_text_scrubbed"], "beauty") != cluster]
         assert not misses, f"{brand}/{cluster} missed {len(misses)}: {misses}"
-        print(f"  OK  {brand:12} {cluster:20} {expected}/{expected} classified correctly")
+        print(f"  OK  {brand:14} {cluster:22} {expected}/{expected} classified correctly")
 
-    # 2. Things that must NOT be clustered
-    negatives = [
-        ("Safaricom", "Network iko poa leo, nashukuru"),
-        ("Safaricom", "M-Pesa charged me a wrong fee on my transfer"),
-        ("Safaricom", "ATM machine retention without reversal notification"),
-        ("Equity Bank", "The app freezes on step 2"),
-        ("Naivas", "The app freezes on step 2"),
-        ("Brookside Dairy", "The milk was great today, thank you"),
-        ("KCB Group", "The milk I bought was sour"),
-        ("Naivas", "My KCB transaction was declined at the till"),
-    ]
-    for brand, text in negatives:
-        result = classify(brand, text)
-        assert result == UNCLASSIFIED, f"False positive: {brand!r} / {text!r} -> {result}"
-    print(f"  OK  {len(negatives)} negative cases stayed unclassified")
-
-    # 3. New brands: no seed data yet, so test classify() directly against
-    # representative sample texts rather than rows already in the database.
+    # 2. Sample texts (the pack is passed in, so these do not depend on the database)
     samples = [
-        ("Brookside Dairy", "spoiled_milk", "Nimenunua maziwa ya Brookside na ni sour, inanuka vibaya"),
-        ("Brookside Dairy", "spoiled_milk", "The milk packet was curdled and past its expiry date"),
-        ("KCB Group", "failed_transaction", "My KCB mobile banking transaction was declined but money imekatwa"),
-        ("KCB Group", "failed_transaction", "Transfer failed twice and the app shows no reversal"),
-        ("Naivas", "stockout_and_pricing", "Naivas Ngong Road hakuna stock ya sugar since last week"),
-        ("Naivas", "stockout_and_pricing", "The receipt showed a different price than the shelf tag"),
+        ("Garnier", "skin_reaction", "Garnier hair dye gave me a rash and my scalp is burning and swollen"),
+        ("Garnier", "skin_reaction", "Nilitumia Garnier cream usoni na ngozi yangu imevimba na kuwasha sana"),
+        ("Garnier", "white_cast_deep_skin", "The Garnier sunscreen leaves a white cast on my dark skin, I look ashy"),
+        ("Dark & Lovely", "skin_reaction", "After using the Dark & Lovely relaxer my scalp got blisters, I went to hospital"),
+        ("Dark & Lovely", "skin_reaction", "Relaxer ya Dark and Lovely imeunguza kichwa changu na nywele zimeanza kuchubuka"),
+        ("Dark & Lovely", "white_cast_deep_skin", "The Dark & Lovely sunscreen leaves a white cast on my dark skin"),
+        ("Dark & Lovely", "hair_damage", "Hair loss after the treatment, it is falling out in clumps"),
+        ("Dark & Lovely", "skin_reaction", "The Dark & Lovely relaxer burned my scalp and my hair broke off"),
+        ("Nice & Lovely", "skin_reaction", "Nice & Lovely lotion made my skin itchy and red for two days"),
+        ("Nice & Lovely", "hair_damage", "Nywele zangu zimekatika baada ya kutumia relaxer"),
+        ("Mizani", "skin_reaction", "The Mizani treatment gave me an itchy rash on my scalp"),
+        ("Mizani", "hair_damage", "My hair is breaking off after the Mizani relaxer"),
+        ("CeraVe", "white_cast_deep_skin", "The CeraVe sunscreen leaves a white cast on my dark skin"),
+        ("CeraVe", "skin_reaction", "CeraVe cream gave me a rash on my face"),
+        ("Versman", "skin_reaction", "Versman cream gave me an itchy rash on my face"),
+        ("Versman", "white_cast_deep_skin", "Sunscreen hii ya Versman inaacha rangi nyeupe kwenye ngozi nyeusi"),
+        # A brand added later through the Brands screen works with no code change:
+        ("Black Opal", "skin_reaction", "Black Opal foundation gave me an itchy rash on my face"),
+        ("Black Opal", "white_cast_deep_skin", "The Black Opal powder leaves a white cast on dark skin"),
     ]
     for brand, expected_cluster, text in samples:
-        result = classify(brand, text)
+        result = classify(brand, text, "beauty")
         assert result == expected_cluster, f"{brand}/{text!r} -> {result}, expected {expected_cluster}"
-    print(f"  OK  {len(samples)} new-brand sample texts classified correctly (Brookside Dairy, KCB Group, Naivas)")
-    # 4. L'Oreal: no seed data yet, so test classify() directly on sample texts.
-    loreal_samples = [
-        ("skin_reaction", "Nilitumia L'Oreal cream usoni na ngozi yangu imevimba na kuwasha sana"),
-        ("skin_reaction", "Garnier hair dye gave me a rash and my scalp is burning and swollen"),
-        ("skin_reaction", "After using the L'Oreal relaxer my scalp got blisters, I went to hospital"),
-        ("skin_reaction", "L'Or\u00e9al cream gave me an itchy rash on my face"),
-        ("white_cast_deep_skin", "The L'Oreal sunscreen leaves a white cast on my dark skin, I look ashy"),
-        ("white_cast_deep_skin", "Sunscreen ya L'Oreal inaacha rangi nyeupe usoni, ngozi nyeusi inaonekana ya kijivu"),
-        ("white_cast_deep_skin", "This foundation looks chalky and grey on deep skin tones"),
-    ]
-    for expected_cluster, text in loreal_samples:
-        result = classify("L'Oreal", text)
-        assert result == expected_cluster, f"L'Oreal / {text!r} -> {result}, expected {expected_cluster}"
-    print(f"  OK  {len(loreal_samples)} L'Oreal sample texts classified correctly")
+    print(f"  OK  {len(samples)} sample texts classified correctly")
 
-    loreal_negatives = [
-        ("L'Oreal", "I love this cream, my skin feels amazing"),
-        ("L'Oreal", "The Garnier app keeps crashing at checkout"),
-        ("L'Oreal", "Delivery was late and the courier was rude"),
-        ("Naivas", "My skin got a rash from the L'Oreal cream"),
-        ("Unilever", "My skin got a rash after using the cream"),
+    # 3. Things that must NOT be clustered
+    negatives = [
+        ("Garnier", "beauty", "I love this cream, my skin feels amazing"),
+        ("Garnier", "beauty", "The Garnier app keeps crashing at checkout"),
+        ("Garnier", "beauty", "Delivery was late and the courier was rude"),
+        ("Dark & Lovely", "beauty", "The shop did not have my size in stock"),
+        ("Dark & Lovely", "beauty", "The Dark & Lovely shampoo leaves white residue in my hair"),
+        ("Dark & Lovely", "beauty", "The Dark & Lovely relaxer left white residue on my scalp"),
+        ("Garnier", "beauty", "The Garnier shampoo leaves white residue in my hair"),
+        ("Garnier", "beauty", "I love how soft my hair feels after the conditioner"),
+        ("Garnier", "beauty", "The bottle broke in my bag"),
+        ("Garnier", "beauty", ""),
+        ("White Star", "beauty", "White Star shampoo is great, my hair feels deep and soft"),   # brand name alone triggers nothing
+        ("Garnier", "none", "Garnier cream gave me a rash on my face"),                         # pack 'none' never clusters
+        ("Garnier", "no-such-pack", "Garnier cream gave me a rash on my face"),                 # unknown pack is safe
     ]
-    for brand, text in loreal_negatives:
-        result = classify(brand, text)
-        assert result == UNCLASSIFIED, f"False positive: {brand!r} / {text!r} -> {result}"
-    print(f"  OK  {len(loreal_negatives)} L'Oreal-related negative cases stayed unclassified")
+    for brand, pack, text in negatives:
+        result = classify(brand, text, pack)
+        assert result == UNCLASSIFIED, f"False positive: {brand!r}/{pack} / {text!r} -> {result}"
+    print(f"  OK  {len(negatives)} negative cases stayed unclassified")
+
+    # 4. Brand-name matching
+    assert _brand_regex("Dark & Lovely").search("dark and lovely relaxer")
+    assert _brand_regex("Dark & Lovely").search("DARK & LOVELY")
+    assert _brand_regex("???") is None
+    print("  OK  brand-name matching")
 
     print("Clustering tests: all passed.")
 

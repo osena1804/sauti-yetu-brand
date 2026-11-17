@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import os
 import re
+import secrets
 import sys
 
 import db
@@ -91,12 +92,18 @@ def scrub_pii(text):
 def submit_complaint(brand_name, phone, county, text, image_url=None,
                      issue_cluster=None, severity_score=None,
                      confidence_score=None, urgency_level=None,
-                     image_bytes=None, image_mime_type=None):
+                     image_bytes=None, image_mime_type=None, 
+                     consent_version=None, consent_sms=False, 
+                     consent_language=None):
     """Validates input, hashes the phone, scrubs the text, classifies into a cluster,
     and stores the complaint. Returns a dict with the new incident_id and details."""
+    if not consent_version:
+        raise ValueError("Consent is required before a report can be submitted.")
     brand_id = db.get_brand_id(brand_name)
     if brand_id is None:
         raise ValueError(f"Unknown brand: {brand_name!r}")
+    if not db.brand_is_active(brand_id):
+        raise ValueError(f"Brand not available: {brand_name!r}")
 
     clean_county = normalize_county(county)
     if clean_county is None:
@@ -105,9 +112,14 @@ def submit_complaint(brand_name, phone, county, text, image_url=None,
     if not text or not text.strip():
         raise ValueError("Complaint text is empty.")
 
-    phone_hash = hash_phone(phone)
-    normalized_phone = normalize_phone(phone)  # guaranteed valid - hash_phone already raised if not
-    phone_encrypted = crypto_utils.encrypt_field(normalized_phone)
+        phone = (phone or "").strip()
+    if phone:
+        phone_hash = hash_phone(phone)  # raises ValueError if the number is invalid
+        phone_encrypted = crypto_utils.encrypt_field(normalize_phone(phone)) if consent_sms else None
+    else:
+        # Anonymous report: no phone stored, so no SMS can be sent for it.
+        phone_hash = "anon_" + secrets.token_hex(16)
+        phone_encrypted = None
     scrubbed = scrub_pii(text)
 
     if issue_cluster is None:
@@ -133,12 +145,15 @@ def submit_complaint(brand_name, phone, county, text, image_url=None,
     # "1 reporter + photo = URGENCY_SPIKE" shortcut could be exploited with a
     # fake image. Lower-severity photos are checked on-demand by an admin instead.
     if image_bytes and severity_score >= alerts.URGENCY_MIN_SEVERITY:
-        image_check = fraud_audit.analyze_image_authenticity(
-            image_bytes, mime_type=image_mime_type or "image/jpeg"
-        )
-        authenticity_score = image_check["authenticity_score"]
-        is_flagged_synthetic = image_check["is_flagged_synthetic"]
-        authenticity_checked = True
+        try:
+            image_check = fraud_audit.analyze_image_authenticity(
+                image_bytes, mime_type=image_mime_type or "image/jpeg"
+            )
+            authenticity_score = image_check["authenticity_score"]
+            is_flagged_synthetic = image_check["is_flagged_synthetic"]
+            authenticity_checked = True
+        except Exception as e:  # leave it unchecked; an admin can run the check on demand
+             print(f"[ingestion] photo check unavailable: {e}")
 
     is_quarantined = low_confidence_flag or is_flagged_synthetic
     complaint_status = "Quarantined" if is_quarantined else "Open"
@@ -160,6 +175,9 @@ def submit_complaint(brand_name, phone, county, text, image_url=None,
         is_quarantined=is_quarantined,
         status=complaint_status,
         authenticity_checked=authenticity_checked,
+        consent_version=consent_version,
+        consent_sms=consent_sms,
+        consent_language=consent_language,
     )
     # Check and trigger alerts for this brand + cluster
     fired_alerts = alerts.check_alerts(brand_id, issue_cluster)
@@ -179,6 +197,60 @@ def submit_complaint(brand_name, phone, county, text, image_url=None,
     }
 
 
+def submit_counterfeit_report(brand_name, county, outlet_type, outlet_name, reason_text,
+                              front_photo, back_photo, outlet_photo, phone=None,
+                              consent_version=None, consent_sms=False, consent_language=None):
+    """Validates and stores one suspected-counterfeit report. Uses the same checks as
+    submit_complaint: consent recorded, valid brand and county, personal details
+    scrubbed from free text, and the phone (optional) stored only as a keyed hash plus
+    an encrypted copy. Returns the new report_id."""
+    if not consent_version:
+        raise ValueError("Consent is required before a report can be submitted.")
+
+    brand_id = db.get_brand_id(brand_name)
+    if brand_id is None:
+        raise ValueError(f"Unknown brand: {brand_name!r}")
+    if not db.brand_is_active(brand_id):
+        raise ValueError(f"Brand not available: {brand_name!r}")
+
+    clean_county = normalize_county(county)
+    if clean_county is None:
+        raise ValueError(f"Not a valid Kenyan county: {county!r}")
+
+    reason = scrub_pii((reason_text or "").strip())
+    if not reason:
+        raise ValueError("Please tell us why you think it is counterfeit.")
+
+    if not (front_photo and back_photo and outlet_photo):
+        raise ValueError("Please add all three photos: front, back and the outlet.")
+
+    clean_outlet_name = scrub_pii(outlet_name.strip()) if outlet_name and outlet_name.strip() else None
+
+    phone = (phone or "").strip()
+    if phone:
+        phone_hash = hash_phone(phone)  # raises ValueError if the number is invalid
+        phone_encrypted = crypto_utils.encrypt_field(normalize_phone(phone)) if consent_sms else None
+    else:
+        phone_hash = None
+        phone_encrypted = None
+
+    return db.insert_counterfeit_report(
+        brand_id=brand_id,
+        county=clean_county,
+        outlet_type=outlet_type,
+        outlet_name=clean_outlet_name,
+        reason_text=reason,
+        front_photo=front_photo,
+        back_photo=back_photo,
+        outlet_photo=outlet_photo,
+        phone_hash=phone_hash,
+        phone_encrypted=phone_encrypted,
+        consent_version=consent_version,
+        consent_sms=consent_sms,
+        consent_language=consent_language,
+    )
+
+
 # ---------- Self-test ----------
 
 def _notify_auditors_critical(brand_name, cluster_id, fired_alert):
@@ -195,7 +267,10 @@ def _notify_auditors_critical(brand_name, cluster_id, fired_alert):
         f"{count} reports. Check the Alert Board now."
     )
     for phone in phones:
-        sms_gateway.send_sms(phone, message)
+        try:
+             sms_gateway.send_sms(phone, message)
+        except Exception as e:  # an SMS failure must never lose a report or an alert
+             print(f"[ingestion] SMS to auditor failed: {e}")
 
 def _self_test():
     # Phone normalization: all of these are the same number
@@ -235,6 +310,7 @@ if __name__ == "__main__":
             phone="0700 123 456",
             county="nairobi",
             text="Test complaint, my number is 0700123456 and M-Pesa app iko stuck",
+            consent_version="self-test",
         )
         print("Live insert ->", result)
         print("Now run: python seed_data.py to reset the demo data.")

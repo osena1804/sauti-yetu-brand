@@ -1,26 +1,26 @@
-# Secrets — never commit real values
+# ---- secrets and local config: NEVER commit these ----
 .env
-.env.*
+.streamlit/secrets.toml
+*.key
+*.pem
 
-# Local database and generated caches
-sauti_yetu.db
-score_cache.json
-brief_cache.json
-
-# Local Database & User-Uploaded Media
-data/*.db
-data/submitted_photos/
-data/resolved_*.jpg
-
-# Uploaded photo evidence (submitted during demos/testing)
+# ---- data: never commit consumer data, photos or databases ----
+*.db
+*.sqlite
+*.sqlite3
 uploads/
 static/uploads/
+score_cache.json
 
-# Python
+# ---- generated files ----
+qr/
 __pycache__/
 *.pyc
-venv/
 .venv/
+venv/
 
-# Streamlit
-.streamlit/secrets.toml
+# ---- editor / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

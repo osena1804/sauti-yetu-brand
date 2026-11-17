@@ -2,39 +2,78 @@
 
 🚀 **Live Demo:** [sauti-yetu-brand.streamlit.app](https://sauti-yetu-brand-djflh9zwtzfpsw6biv6ry6.streamlit.app)
 
-**Sauti Yetu** ("Our Voice") is an enterprise-grade consumer incident management and brand risk telemetry platform. Built for zero-trust environments, it captures multi-channel consumer complaints in real time, routes high-severity risks, quarantines bad-faith or prompt-injection attacks through an AI Fraud Audit Shield, and unmasks encrypted PII on-demand for dispute reviews.
+Consumer-voice and brand-risk telemetry for brands in Kenya. Consumers scan a QR code and report a product
+problem or a suspected counterfeit on a web form. The platform scores and clusters the reports, raises alerts,
+routes counterfeit reports to a restricted review queue, and tracks whether a brand's claimed fix is
+confirmed by the people affected.
 
----
+> **Status: pilot prototype.** Demo data is simulated. Do not collect real consumer data until the DPIA,
+> consent wording and hosting are signed off (see "Before real data" below).
 
-## 🌟 Key Features
+## Run it locally
 
-- **📱 Multimodal & Localized Ingestion:** Processes multi-channel inputs (Swahili, Sheng, English, voice transcripts, and visual image evidence) with automatic PII scrubbing and geospatial tagging across Kenyan market hubs.
-- **🔐 Zero-Trust Security & PII Encryption:** 
-  - **AES-256 Symmetric Encryption:** Sensitive complainant identity details (phone numbers, full names) and admin signatures are encrypted at rest.
-  - **HMAC-SHA256 Irreversible Indexing:** Deterministic hash lookup for outbound SMS routing without exposing raw PII.
-  - **On-Demand Unmasking:** Decryption restricted to authenticated admin dispute review triggers.
-- **🛡️ AI Fraud & Quarantine Shield:** Automatically filters prompt-injection attacks, defamatory content, and synthetic spam out of executive analytics into a dedicated **Fraud Audit Portal**.
-- **📊 Public & Workspace Dashboards:** Clean real-time telemetry tracking incident clusters, severity scores, and urgency tiers unpolluted by quarantined entries.
-- **📋 Dispute Resolution Workflow:** Complete dispute manager interface with escalation loops, manager override toggles, and photo-verified audit trail generation.
-- **☁️ Cloud Auto-Seeding:** Autonomous database startup initialization to populate 39 enterprise complaints and active alerts on fresh Streamlit Cloud deployments.
+```
+python -m venv .venv
+.venv\Scripts\activate            # Windows   (Mac/Linux: source .venv/bin/activate)
+pip install -r requirements.txt
+copy .streamlit\secrets.toml.example .streamlit\secrets.toml     # then edit the values
+streamlit run <main file>.py
+```
 
----
+The first start creates `sauti_yetu.db` and, in demo mode, fills it with simulated data.
 
-## 🛠️ Architecture & Tech Stack
+## Configuration
 
-- **Frontend & Visualization:** Streamlit
-- **Core Processing:** Python 3.10+, SQLite3, Pandas
-- **Intelligence Layer:** Google Gemini API & Anthropic Claude API (Structured classification, image verification, and streaming intelligence)
-- **Security & Cryptography:** `cryptography` (Fernet AES-256), `hashlib` (HMAC-SHA256)
-- **Messaging Gateway:** Africa's Talking API & Twilio integration
+Set these as environment variables, or in `.streamlit/secrets.toml`, or in Streamlit Cloud under Settings, Secrets.
 
----
+| Name | What it does |
+|---|---|
+| `SAUTI_AES_KEY` | Encrypts phone numbers and admin identities |
+| `SAUTI_SALT` | Secret for the keyed phone hash. Changing it breaks duplicate counting |
+| `SAUTI_JWANJIRU_PASSWORD`, `SAUTI_KOTIENO_PASSWORD` | Demo admin passwords. Never leave the placeholders on a public app |
+| `GEMINI_API_KEY` | AI scoring. Without it, or with `SAUTI_OFFLINE=1`, built-in rules are used |
+| `SAUTI_OFFLINE` | `1` = rule-based scoring only; nothing is sent to an AI service |
+| `SAUTI_DEMO` | `1` (default) = demo data and banner. `0` = real client deployment, starts empty |
+| `SAUTI_CLIENT_NAME` | Client name shown in the app |
+| `SAUTI_CONTROLLER_NAME`, `SAUTI_PRIVACY_CONTACT` | Used in the consent notice |
+| `SAUTI_RETAIN_AFTER_RESOLUTION_DAYS`, `SAUTI_RETAIN_UNTIED_DAYS`, `SAUTI_RETAIN_COUNTERFEIT_DAYS` | Retention periods (defaults 30, 90, 60) |
 
-## 🚀 Quickstart Guide
+## Roles
 
-### 1. Prerequisites
+| Role | Can see |
+|---|---|
+| (not logged in) | Alert Board (counts and brand statements only), report forms |
+| `brand_manager` | Internal data, resolution tracker, fraud audit |
+| `brand_protection` | Counterfeit review (photos and reports) |
+| `auditor` | Everything above, plus Data & Privacy and Brands |
 
-Ensure you have Python 3.10 or higher installed:
+Photos and individual reports are visible to logged-in admins only.
 
-```bash
-python --version
+## Brands and clients
+
+Brands are data, not code: add them on the **Brands** screen (auditor). Each brand uses a *rule pack*
+(`clustering.py`) that decides which issue clusters it can raise. Each client gets its own deployment and
+database, so one client's brands and reports are never visible to another's consumers.
+
+## Data retention
+
+`python retention.py` shows what is due for deletion (a dry run). `python retention.py --apply` deletes it.
+Only anonymous counts are kept. The same actions are available to auditors on the Data & Privacy screen.
+
+## Tests
+
+```
+python clustering.py          # clustering rules (needs the seeded database)
+python retention.py           # dry run of retention
+```
+
+## Before real data
+
+- Lawyer-approved consent notice (English and Swahili); set `WORDING_IS_DRAFT = False` in `consent.py`.
+- Completed DPIA and processing agreement.
+- Production hosting with a persistent database and private photo storage (not local files).
+- Real admin passwords, multi-factor login, and keys held in a secrets manager.
+
+## Never commit
+
+Secrets, `*.db`, `uploads/`, `score_cache.json`. They are listed in `.gitignore`.
