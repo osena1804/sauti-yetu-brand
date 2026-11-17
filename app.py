@@ -14,6 +14,9 @@ import retention
 import settings
 
 admins.seed_admin_accounts()
+# TEMPORARY: shows which accounts exist (usernames and roles only). Remove once fixed.
+with db.get_connection() as _c:
+    print("[debug] admin accounts:", [(r["username"], r["role"]) for r in _c.execute("SELECT username, role FROM admins")])
 
 st.set_page_config(page_title="Sauti-Yetu", page_icon="📡", layout="wide")
 
