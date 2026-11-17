@@ -28,7 +28,7 @@ if "[" in PRIVACY_CONTACT:
 
 _EN = {
     "heading": "Before you report",
-    #"draft_note": "⚠️ Draft wording, pending legal review.",
+    "draft_note": "⚠️ Draft wording, pending legal review.",
     "notice_title": "How we use your report (please read)",
     "notice_body": (
         "**Who we are.** This service is run by Sauti-Yetu for {controller}, which decides how your report is used.\n\n"
